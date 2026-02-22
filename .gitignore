@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+build/
+tmp/
+out-tsc/
+.angular/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Angular cache
+.angular/cache/
+
+# Misc
+*.tgz
+*.zip
+*.tar.gz
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript cache
+*.tsbuildinfo

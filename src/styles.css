@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== Global MortgageMax Style Overrides ===== */
+
+body {
+  font-family: Arial, sans-serif;
+  color: #666666;
+  background-color: #ffffff;
+  margin: 0;
+  padding: 0;
+}
+
+/* Scrollbar styling for the guide feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
+
+/* Sticky table header support */
+.sticky-table-container {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid #D9D9D9;
+  border-radius: 4px;
+}
+
+.sticky-table-container thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: #009BE4;
+  color: #ffffff;
+}
+
+/* Smooth transitions */
+.sidebar-transition {
+  transition: width 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
