@@ -1,6 +1,18 @@
 /**
  * Rule Model - Defines the structure of eligibility rules
+ * Includes provenance and versioning for audit compliance
  */
+
+export interface RuleProvenance {
+  author: string;
+  authorEmail?: string;
+  version: string;
+  effectiveDate: string;
+  expirationDate?: string;
+  approvedBy?: string;
+  approvalDate?: string;
+  changeReason?: string;
+}
 
 export interface Rule {
   id: string;
@@ -24,6 +36,8 @@ export interface Rule {
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+  // Provenance & versioning fields
+  provenance?: RuleProvenance;
 }
 
 export type RuleCategory = 'rate' | 'balance' | 'property' | 'status' | 'age' | 'pool' | 'custom';

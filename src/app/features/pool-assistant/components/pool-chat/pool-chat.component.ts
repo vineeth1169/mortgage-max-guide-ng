@@ -284,6 +284,58 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
             >
               Summary
             </button>
+            
+            <!-- Download Dropdown for Ineligible Loans -->
+            @if (hasIneligibleLoans()) {
+              <div class="relative">
+                <button
+                  (click)="showDownloadMenu.set(!showDownloadMenu())"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full
+                         border border-purple-300 text-purple-600 bg-purple-50 hover:bg-purple-100 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  Download Report
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </button>
+                
+                @if (showDownloadMenu()) {
+                  <div class="absolute top-full left-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                    <button
+                      (click)="downloadIneligible('csv')"
+                      class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50 transition-colors"
+                    >
+                      📄 CSV Spreadsheet
+                    </button>
+                    <button
+                      (click)="downloadIneligible('excel')"
+                      class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50 transition-colors"
+                    >
+                      📊 Excel File
+                    </button>
+                    <button
+                      (click)="downloadIneligible('pdf')"
+                      class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50 transition-colors"
+                    >
+                      📑 PDF Report
+                    </button>
+                    <button
+                      (click)="downloadIneligible('json')"
+                      class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50 transition-colors"
+                    >
+                      🔧 JSON Data
+                    </button>
+                  </div>
+                }
+              </div>
+            }
           </div>
         </div>
       }
@@ -393,7 +445,7 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
                       <span class="text-base">⚡</span>
                       <div class="flex-1">
                         <div class="font-medium text-gray-800">Groq</div>
-                        <div class="text-[10px] text-gray-500">Free, ultra-fast LLaMA 3.1</div>
+                        <div class="text-[10px] text-gray-500">Ultra-fast LLaMA 3.1</div>
                       </div>
                       @if (chatService.aiProvider() === 'groq') {
                         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none"
@@ -419,29 +471,12 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
                         </svg>
                       }
                     </button>
-                    <button
-                      (click)="selectProvider('demo')"
-                      class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50 transition-colors"
-                      [class.bg-blue-50]="chatService.aiProvider() === 'demo'"
-                    >
-                      <span class="text-base">🎯</span>
-                      <div class="flex-1">
-                        <div class="font-medium text-gray-800">Demo</div>
-                        <div class="text-[10px] text-gray-500">Offline pattern matching</div>
-                      </div>
-                      @if (chatService.aiProvider() === 'demo') {
-                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none"
-                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <polyline points="20 6 9 17 4 12"/>
-                        </svg>
-                      }
-                    </button>
                   </div>
                 }
               </div>
 
               <!-- API Key button (when not configured) -->
-              @if (chatService.aiProvider() !== 'demo' && !chatService.aiConfigured()) {
+              @if (!chatService.aiConfigured()) {
                 <button
                   (click)="showApiKeyInput.set(!showApiKeyInput())"
                   class="text-[10px] text-orange-600 hover:text-orange-800 font-medium"
@@ -466,7 +501,7 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
             <input
               type="password"
               [(ngModel)]="apiKeyInput"
-              [placeholder]="chatService.aiProvider() === 'groq' ? 'Enter Groq API key (free at console.groq.com)...' : 'Enter Claude API key...'"
+              [placeholder]="chatService.aiProvider() === 'groq' ? 'Enter Groq API key (console.groq.com)...' : 'Enter Claude API key...'"
               class="flex-1 text-xs px-2 py-1.5 rounded border border-blue-300 focus:outline-none focus:border-blue-500"
             />
             <button
@@ -510,10 +545,17 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
       margin-bottom: 0.25rem;
       color: #444;
     }
+    /* Scrollable table wrapper for large datasets */
+    .message-content :deep(.table-scroll-wrapper) {
+      max-height: 400px;
+      overflow: auto;
+      margin: 0.5rem 0;
+      border: 1px solid #e5e7eb;
+      border-radius: 0.375rem;
+    }
     .message-content :deep(table) {
       width: 100%;
       border-collapse: collapse;
-      margin: 0.5rem 0;
       font-size: 0.75rem;
     }
     .message-content :deep(th) {
@@ -523,10 +565,14 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
       font-weight: 600;
       border-bottom: 2px solid #d1d5db;
       white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 1;
     }
     .message-content :deep(td) {
       padding: 0.3rem 0.5rem;
       border-bottom: 1px solid #e5e7eb;
+      white-space: nowrap;
     }
     .message-content :deep(tr:hover) td {
       background-color: #f9fafb;
@@ -574,6 +620,13 @@ export class PoolChatComponent implements AfterViewChecked {
   readonly showApiKeyInput = signal(false);
   readonly apiKeyInput = signal('');
   readonly showProviderMenu = signal(false);
+  readonly showDownloadMenu = signal(false);
+
+  /** Check if there are ineligible loans to download */
+  readonly hasIneligibleLoans = computed(() => {
+    const results = this.chatService.validationResults();
+    return results.some(r => !r.eligible);
+  });
 
   private shouldScrollToBottom = true;
   private hideTimeout: any;
@@ -593,6 +646,10 @@ export class PoolChatComponent implements AfterViewChecked {
     { command: 'explain rule RATE-001', description: 'Explain the Positive Interest Rate rule', requiresLoans: false },
     { command: 'explain rule BAL-003', description: 'Explain the Conforming Loan Limit rule', requiresLoans: false },
     { command: 'explain rule PROP-001', description: 'Explain the Eligible Property Types rule', requiresLoans: false },
+    { command: 'download ineligible csv', description: 'Export ineligible loans as CSV file', requiresLoans: true },
+    { command: 'download ineligible excel', description: 'Export ineligible loans as Excel file', requiresLoans: true },
+    { command: 'download ineligible pdf', description: 'Export ineligible loans as PDF report', requiresLoans: true },
+    { command: 'download ineligible json', description: 'Export ineligible loans as JSON file', requiresLoans: true },
   ];
 
   readonly filteredSuggestions = computed(() => {
@@ -693,11 +750,7 @@ export class PoolChatComponent implements AfterViewChecked {
     }
   }
 
-  toggleDemoMode(): void {
-    this.chatService.toggleDemoMode();
-  }
-
-  selectProvider(provider: 'groq' | 'claude' | 'demo'): void {
+  selectProvider(provider: 'groq' | 'claude'): void {
     this.chatService.setAIProvider(provider);
     this.showProviderMenu.set(false);
   }
@@ -709,8 +762,6 @@ export class PoolChatComponent implements AfterViewChecked {
         return 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100';
       case 'claude':
         return 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100';
-      case 'demo':
-        return 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100';
       default:
         return 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100';
     }
@@ -812,7 +863,8 @@ export class PoolChatComponent implements AfterViewChecked {
         }
 
         if (!inTable) {
-          result.push('<table>');
+          // Wrap table in scrollable container for large datasets
+          result.push('<div class="table-scroll-wrapper"><table>');
           inTable = true;
           // This is the header row
           result.push('<thead><tr>');
@@ -826,7 +878,7 @@ export class PoolChatComponent implements AfterViewChecked {
         result.push('</tr>');
       } else {
         if (inTable) {
-          result.push('</tbody></table>');
+          result.push('</tbody></table></div>');
           inTable = false;
           headerDone = false;
         }
@@ -835,7 +887,7 @@ export class PoolChatComponent implements AfterViewChecked {
     }
 
     if (inTable) {
-      result.push('</tbody></table>');
+      result.push('</tbody></table></div>');
     }
 
     return result.join('');
@@ -874,6 +926,11 @@ export class PoolChatComponent implements AfterViewChecked {
 
   cancelEditSessionName(): void {
     this.editingSessionId.set(null);
+  }
+
+  downloadIneligible(format: string): void {
+    this.showDownloadMenu.set(false);
+    this.chatService.exportIneligibleLoans(format as any);
   }
 
   private scrollToBottom(): void {

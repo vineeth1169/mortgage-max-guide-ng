@@ -1,0 +1,28 @@
+# ────────────────────────────────────────────────────────────────────
+# Loan Pool Advisor - Docker Compose Configuration
+# ────────────────────────────────────────────────────────────────────
+
+version: '3.8'
+
+services:
+  rules-api:
+    build: .
+    container_name: pool-advisor-rules-api
+    ports:
+      - "3001:3001"
+    volumes:
+      - rules-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  rules-data:
+    driver: local

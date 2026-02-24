@@ -1,4 +1,5 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject, signal, computed } from '@angular/core';
+import * as XLSX from 'xlsx';
 import {
   LoanRecord,
   LoanValidationResult,
@@ -8,6 +9,7 @@ import {
   LoanFilter,
   REQUIRED_LOAN_FIELDS,
 } from '../models/pool-logic.model';
+import { DynamicValidationEngine, DynamicRule } from './dynamic-validation-engine.service';
 
 /** Returned when required fields are missing from the uploaded data. */
 export interface ParseError {
@@ -22,172 +24,62 @@ export type ParseResult =
 
 @Injectable({ providedIn: 'root' })
 export class LoanValidationService {
+  private readonly dynamicEngine = inject(DynamicValidationEngine);
 
-  // ── PoolLogic Eligibility Rules ────────────────────────────────────
-  private readonly eligibilityRules: EligibilityRule[] = [
-    {
-      ruleId: 'RATE-001',
-      ruleName: 'Positive Interest Rate',
-      category: 'general',
-      description: 'Interest rate must be greater than 0% and not exceed 12%.',
-      guideReference: 'Guide Section 2201.3',
-    },
-    {
-      ruleId: 'RATE-002',
-      ruleName: 'Coupon Rate Consistency',
-      category: 'general',
-      description: 'Coupon rate must not exceed the interest rate.',
-      guideReference: 'Guide Section 6302.1',
-    },
-    {
-      ruleId: 'RATE-003',
-      ruleName: 'Net Yield Consistency',
-      category: 'general',
-      description: 'Net yield must be positive and must not exceed the coupon rate.',
-      guideReference: 'Guide Section 6302.2',
-    },
-    {
-      ruleId: 'BAL-001',
-      ruleName: 'Positive UPB',
-      category: 'balance',
-      description: 'Unpaid principal balance (UPB) must be greater than zero.',
-      guideReference: 'Guide Section 2101.1',
-    },
-    {
-      ruleId: 'BAL-002',
-      ruleName: 'Investor Balance vs UPB',
-      category: 'balance',
-      description: 'Current investor balance must not exceed the UPB.',
-      guideReference: 'Guide Section 6304.1',
-    },
-    {
-      ruleId: 'BAL-003',
-      ruleName: 'Conforming Loan Limit',
-      category: 'balance',
-      description: 'UPB must not exceed the conforming loan limit of $766,550 (2025).',
-      guideReference: 'Guide Section 2101.1',
-    },
-    {
-      ruleId: 'PROP-001',
-      ruleName: 'Eligible Property Types',
-      category: 'property',
-      description: 'Property must be of an eligible type: SF, CO, CP, PU, MH, or 2-4.',
-      guideReference: 'Guide Section 4200',
-    },
-    {
-      ruleId: 'AGE-001',
-      ruleName: 'Maximum Loan Age',
-      category: 'general',
-      description: 'Loan age must not exceed 360 months (30 years).',
-      guideReference: 'Guide Section 2201.1',
-    },
-    {
-      ruleId: 'STATUS-001',
-      ruleName: 'Active Loan Status',
-      category: 'general',
-      description: 'Loan status code must indicate an active, performing loan (codes: A, C).',
-      guideReference: 'Guide Section 8100',
-    },
-    {
-      ruleId: 'RTYPE-001',
-      ruleName: 'Eligible Rate Type',
-      category: 'general',
-      description: 'Rate type code must be FRM (fixed) or ARM (adjustable).',
-      guideReference: 'Guide Section 3100',
-    },
-    {
-      ruleId: 'POOL-001',
-      ruleName: 'Pool Number Required',
-      category: 'general',
-      description: 'A valid pool number must be assigned to the loan.',
-      guideReference: 'Guide Section 6301.1',
-    },
-  ];
+  // ── State ─────────────────────────────────────────────────────────
+  readonly rulesLoaded = signal<boolean>(false);
+  readonly rulesError = signal<string | null>(null);
+  
+  // ── Computed: Rules from Dynamic Engine ───────────────────────────
+  readonly eligibilityRules = computed<EligibilityRule[]>(() => {
+    return this.dynamicEngine.enabledRules().map(r => this.mapDynamicToEligibility(r));
+  });
+  
+  readonly ruleCount = computed(() => this.eligibilityRules().length);
+
+  // ── Rule Loading ──────────────────────────────────────────────────
+  
+  /**
+   * Load rules from API. Call this before validation.
+   * Returns true if rules were loaded successfully.
+   */
+  async loadRules(): Promise<boolean> {
+    const success = await this.dynamicEngine.loadRules();
+    this.rulesLoaded.set(success);
+    this.rulesError.set(this.dynamicEngine.error());
+    return success;
+  }
+
+  /**
+   * Refresh rules from API. Use after adding/editing rules in the UI.
+   * This ensures new rules take effect immediately.
+   */
+  async refreshRules(): Promise<boolean> {
+    return this.loadRules();
+  }
+
+  /**
+   * Check if API is available
+   */
+  async isApiAvailable(): Promise<boolean> {
+    return this.dynamicEngine.checkApiHealth();
+  }
+
+  private mapDynamicToEligibility(rule: DynamicRule): EligibilityRule {
+    return {
+      ruleId: rule.id,
+      ruleName: rule.name,
+      category: rule.category as any,
+      description: rule.description,
+      guideReference: rule.guideReference,
+    };
+  }
 
   // ── Validate Single Loan ──────────────────────────────────────────
   validateLoan(loan: LoanRecord): LoanValidationResult {
-    const violations: RuleViolation[] = [];
-
-    // RATE-001: Interest rate range
-    if (loan.interestRate <= 0 || loan.interestRate > 12) {
-      violations.push(this.createViolation('RATE-001', `${loan.interestRate}%`, '0% < rate ≤ 12%', 'error',
-        `The interest rate of ${loan.interestRate}% is outside the acceptable range. Rates must be greater than 0% and not exceed 12%.`,
-        `Verify the interest rate is correctly entered. Correct the note rate to a value between 0% and 12% before resubmitting.`));
-    }
-
-    // RATE-002: Coupon rate consistency
-    if (loan.couponRate > 0 && loan.interestRate > 0 && loan.couponRate > loan.interestRate) {
-      violations.push(this.createViolation('RATE-002', `Coupon: ${loan.couponRate}%, Rate: ${loan.interestRate}%`, 'Coupon ≤ Interest Rate', 'error',
-        `The coupon rate of ${loan.couponRate}% exceeds the interest rate of ${loan.interestRate}%.`,
-        `Adjust the coupon rate to be at or below the note interest rate. Recalculate the servicing spread if needed.`));
-    }
-
-    // RATE-003: Net yield consistency
-    if (loan.netYield < 0 || (loan.couponRate > 0 && loan.netYield > loan.couponRate)) {
-      violations.push(this.createViolation('RATE-003', `Yield: ${loan.netYield}%, Coupon: ${loan.couponRate}%`, 'Yield ≥ 0 and ≤ Coupon', 'warning',
-        `The net yield of ${loan.netYield}% is inconsistent with the coupon rate of ${loan.couponRate}%.`,
-        `Recalculate the net yield to ensure it is non-negative and does not exceed the coupon rate. Review guaranty fee and servicing fee deductions.`));
-    }
-
-    // BAL-001: Positive UPB
-    if (loan.upb <= 0) {
-      violations.push(this.createViolation('BAL-001', `$${loan.upb.toLocaleString()}`, '> $0', 'error',
-        `The unpaid principal balance of $${loan.upb.toLocaleString()} must be greater than zero.`,
-        `Confirm the UPB is populated and greater than zero. Exclude fully paid-off or zero-balance loans from the pool file.`));
-    }
-
-    // BAL-002: Investor balance vs UPB
-    if (loan.currentInvestorBalance > 0 && loan.upb > 0 && loan.currentInvestorBalance > loan.upb) {
-      violations.push(this.createViolation('BAL-002', `Investor: $${loan.currentInvestorBalance.toLocaleString()}, UPB: $${loan.upb.toLocaleString()}`, 'Investor Balance ≤ UPB', 'warning',
-        `The current investor balance of $${loan.currentInvestorBalance.toLocaleString()} exceeds the UPB of $${loan.upb.toLocaleString()}.`,
-        `Reconcile the investor balance so it does not exceed the current UPB. Verify recent principal payments or curtailments are reflected.`));
-    }
-
-    // BAL-003: Conforming limit
-    if (loan.upb > 766550) {
-      violations.push(this.createViolation('BAL-003', `$${loan.upb.toLocaleString()}`, '≤ $766,550', 'error',
-        `The UPB of $${loan.upb.toLocaleString()} exceeds the 2025 conforming loan limit of $766,550.`,
-        `This loan exceeds the conforming limit. Route it to a jumbo or high-balance pool, or split the balance to meet the limit.`));
-    }
-
-    // PROP-001: Property type
-    const validTypes = ['SF', 'CO', 'CP', 'PU', 'MH', '2-4'];
-    if (loan.propertyType && !validTypes.includes(loan.propertyType.toUpperCase())) {
-      violations.push(this.createViolation('PROP-001', loan.propertyType, validTypes.join(', '), 'error',
-        `The property type "${loan.propertyType}" is not among the eligible types for MortgageMax purchase.`,
-        `Update the property type to one of the eligible codes: SF, CO, CP, PU, MH, or 2-4. Verify the property classification against the appraisal.`));
-    }
-
-    // AGE-001: Maximum loan age
-    if (loan.loanAgeMonths > 360) {
-      violations.push(this.createViolation('AGE-001', `${loan.loanAgeMonths} months`, '≤ 360 months', 'error',
-        `The loan age of ${loan.loanAgeMonths} months exceeds the maximum allowed 360 months (30 years).`,
-        `This loan exceeds the 30-year maximum age. Remove it from the pool or verify the origination date is correctly entered.`));
-    }
-
-    // STATUS-001: Active status
-    const activeStatuses = ['A', 'C'];
-    if (loan.loanStatusCode && !activeStatuses.includes(loan.loanStatusCode.toUpperCase())) {
-      violations.push(this.createViolation('STATUS-001', loan.loanStatusCode, 'A or C', 'error',
-        `The loan status code "${loan.loanStatusCode}" does not indicate an active, performing loan. Expected: A (Active) or C (Current).`,
-        `Only active (A) or current (C) loans are eligible for pooling. Resolve any delinquency or default status before resubmitting.`));
-    }
-
-    // RTYPE-001: Eligible rate type
-    const validRateTypes = ['FRM', 'ARM'];
-    if (loan.rateTypeCode && !validRateTypes.includes(loan.rateTypeCode.toUpperCase())) {
-      violations.push(this.createViolation('RTYPE-001', loan.rateTypeCode, 'FRM or ARM', 'error',
-        `The rate type code "${loan.rateTypeCode}" is not an eligible rate type. Expected: FRM (Fixed) or ARM (Adjustable).`,
-        `Update the rate type code to FRM (Fixed Rate Mortgage) or ARM (Adjustable Rate Mortgage). Verify the loan product type in the origination system.`));
-    }
-
-    // POOL-001: Pool number required
-    if (!loan.poolNumber || loan.poolNumber.trim() === '') {
-      violations.push(this.createViolation('POOL-001', '(empty)', 'Non-empty pool number', 'warning',
-        `No pool number is assigned to this loan. A valid pool number is required for pool delivery.`,
-        `Assign a valid MortgageMax pool number before including this loan in pool delivery. Contact your MortgageMax representative if a pool number has not been issued.`));
-    }
-
+    // Use dynamic validation engine for all rule evaluation
+    const violations = this.dynamicEngine.validateLoan(loan);
+    
     const errorCount = violations.filter(v => v.severity === 'error').length;
     const warningCount = violations.filter(v => v.severity === 'warning').length;
     const score = Math.max(0, 100 - (errorCount * 15) - (warningCount * 5));
@@ -202,6 +94,15 @@ export class LoanValidationService {
   }
 
   // ── Validate Batch ────────────────────────────────────────────────
+  async validateLoansAsync(loans: LoanRecord[]): Promise<LoanValidationResult[]> {
+    // Ensure rules are loaded from API before validation
+    if (!this.rulesLoaded()) {
+      await this.loadRules();
+    }
+    return loans.map(loan => this.validateLoan(loan));
+  }
+
+  // ── Validate Batch (sync - uses cached rules) ─────────────────────
   validateLoans(loans: LoanRecord[]): LoanValidationResult[] {
     return loans.map(loan => this.validateLoan(loan));
   }
@@ -277,13 +178,13 @@ export class LoanValidationService {
 
   // ── Get All Rules ─────────────────────────────────────────────────
   getRules(): EligibilityRule[] {
-    return [...this.eligibilityRules];
+    return [...this.eligibilityRules()];
   }
 
   // ── Explain Rule ──────────────────────────────────────────────────
   explainRule(ruleId: string): string {
-    const rule = this.eligibilityRules.find(r => r.ruleId === ruleId);
-    if (!rule) return `Rule ${ruleId} not found in the PoolLogic rule set.`;
+    const rule = this.eligibilityRules().find(r => r.ruleId === ruleId);
+    if (!rule) return `Rule ${ruleId} not found. Rules may not be loaded yet. Please ensure the backend is running.`;
     return `**${rule.ruleName}** (${rule.ruleId})\n\nCategory: ${rule.category}\nReference: ${rule.guideReference}\n\n${rule.description}`;
   }
 
@@ -340,6 +241,36 @@ export class LoanValidationService {
     }
   }
 
+  // ── Parse XLSX ────────────────────────────────────────────────────
+  parseXLSX(buffer: ArrayBuffer): ParseResult {
+    try {
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        return { ok: false, error: { type: 'missing-fields', missingFields: [...REQUIRED_LOAN_FIELDS], message: 'Excel file has no sheets.' } };
+      }
+
+      const worksheet = workbook.Sheets[firstSheetName];
+      const records: Record<string, unknown>[] = XLSX.utils.sheet_to_json(worksheet);
+
+      if (records.length === 0) {
+        return { ok: false, error: { type: 'missing-fields', missingFields: [...REQUIRED_LOAN_FIELDS], message: 'No records found in Excel file.' } };
+      }
+
+      // Check required fields against the first record
+      const firstRecordKeys = Object.keys(records[0]).map(k => this.normalizeFieldName(k));
+      const missingFields = this.findMissingFields(firstRecordKeys);
+      if (missingFields.length > 0) {
+        return { ok: false, error: { type: 'missing-fields', missingFields, message: `Required field(s) missing from Excel: ${missingFields.join(', ')}` } };
+      }
+
+      const loans = records.map((r, idx) => this.mapToLoanRecord(r, idx + 1));
+      return { ok: true, loans };
+    } catch (err) {
+      return { ok: false, error: { type: 'missing-fields', missingFields: [], message: 'Could not parse Excel file. Please ensure the file is a valid .xlsx or .xls file.' } };
+    }
+  }
+
   // ── Required-field validation helpers ─────────────────────────────
   private findMissingFields(normalizedHeaders: string[]): string[] {
     return REQUIRED_LOAN_FIELDS.filter(
@@ -352,14 +283,6 @@ export class LoanValidationService {
   }
 
   // ── Private Helpers ───────────────────────────────────────────────
-  private createViolation(
-    ruleId: string, actualValue: string, expectedValue: string,
-    severity: 'error' | 'warning', explanation: string, recommendedAction: string
-  ): RuleViolation {
-    const rule = this.eligibilityRules.find(r => r.ruleId === ruleId)!;
-    return { rule, actualValue, expectedValue, severity, explanation, recommendedAction };
-  }
-
   private parseCSVLine(line: string): string[] {
     const result: string[] = [];
     let current = '';

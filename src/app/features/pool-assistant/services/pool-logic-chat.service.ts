@@ -17,7 +17,8 @@ import {
 import { LoanValidationService } from './loan-validation.service';
 import { EligibilityApiService } from './eligibility-api.service';
 import { PoolingApiService } from './pooling-api.service';
-import { ClaudeAIService, AIProvider, PROVIDER_INFO } from './claude-ai.service';
+import { ClaudeAIService, AIProvider, PROVIDER_INFO, LoanDataContext, LoanSample, LoanStats } from './claude-ai.service';
+import { ExportService, ExportFormat } from './export.service';
 
 @Injectable({ providedIn: 'root' })
 export class PoolLogicChatService {
@@ -25,12 +26,12 @@ export class PoolLogicChatService {
   private readonly eligibilityApi = inject(EligibilityApiService);
   private readonly poolingApi = inject(PoolingApiService);
   private readonly claudeService = inject(ClaudeAIService);
+  private readonly exportService = inject(ExportService);
 
   // ── AI Mode ───────────────────────────────────────────────────────
   readonly aiModeEnabled = computed(() => this.claudeService.isEnabled());
   readonly aiConfigured = computed(() => this.claudeService.isConfigured());
   readonly aiError = computed(() => this.claudeService.lastError());
-  readonly demoMode = computed(() => this.claudeService.demoMode());
   readonly aiProvider = computed(() => this.claudeService.provider());
   readonly aiProviderInfo = computed(() => this.claudeService.providerInfo());
   readonly aiModeLabel = computed(() => this.claudeService.aiModeLabel());
@@ -164,19 +165,24 @@ export class PoolLogicChatService {
     this.updateAgentStatus('parsing', 10, `Reading ${file.name}...`);
 
     try {
-      const text = await file.text();
-
-      if (fileType !== 'csv' && fileType !== 'json') {
+      if (fileType !== 'csv' && fileType !== 'json' && fileType !== 'xlsx') {
         attachment.status = 'error';
-        attachment.errorMessage = 'Unsupported file format. Please upload a CSV or JSON file.';
-        this.appendAssistantMessage(`I'm unable to parse **${file.name}**. Currently supported formats are CSV and JSON. Please convert your file and try again.`);
+        attachment.errorMessage = 'Unsupported file format. Please upload a CSV, JSON, or Excel file.';
+        this.appendAssistantMessage(`I'm unable to parse **${file.name}**. Currently supported formats are CSV, JSON, and Excel (.xlsx, .xls). Please convert your file and try again.`);
         this.updateAgentStatus('idle', 0, '');
         return;
       }
 
-      const result = fileType === 'csv'
-        ? this.validationService.parseCSV(text)
-        : this.validationService.parseJSON(text);
+      let result;
+      if (fileType === 'xlsx') {
+        const buffer = await file.arrayBuffer();
+        result = this.validationService.parseXLSX(buffer);
+      } else {
+        const text = await file.text();
+        result = fileType === 'csv'
+          ? this.validationService.parseCSV(text)
+          : this.validationService.parseJSON(text);
+      }
 
       if (!result.ok) {
         attachment.status = 'error';
@@ -211,12 +217,11 @@ export class PoolLogicChatService {
 
       let previewMsg = `Successfully parsed **${file.name}** — **${loans.length} loan records** identified.\n\n`;
 
-      // Build a preview table of the first 10 rows
-      const preview = loans.slice(0, 10);
-      previewMsg += `### Data Preview${loans.length > 10 ? ` (first 10 of ${loans.length})` : ''}\n\n`;
+      // Build a complete table of all loans
+      previewMsg += `### All Uploaded Loans (${loans.length} records)\n\n`;
       previewMsg += `| # | Loan # | Pool | Prefix | Rate | Coupon | UPB | Age | Status | Rate Type | Property |\n`;
       previewMsg += `|---|---|---|---|---|---|---|---|---|---|---|\n`;
-      preview.forEach((l, i) => {
+      loans.forEach((l, i) => {
         previewMsg += `| ${i + 1} | ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.mbsPoolPrefix || '-'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode || '-'} | ${l.rateTypeCode || '-'} | ${l.propertyType || '-'} |\n`;
       });
 
@@ -278,7 +283,7 @@ export class PoolLogicChatService {
     this.claudeService.clearHistory();
     this.appendAssistantMessage(
       `**AI Mode Disabled**\n\n` +
-      `Switched back to keyword-based mode. Use commands like "validate", "build pool", "filter", etc.`
+      `AI conversation history cleared. Use commands like "validate", "build pool", "filter", etc.`
     );
   }
 
@@ -292,7 +297,7 @@ export class PoolLogicChatService {
         this.appendAssistantMessage(
           `${info.icon} **Switched to ${info.name}**\n\n` +
           `${info.description}\n\n` +
-          `⚠️ API key required. Get a free key at [console.groq.com](https://console.groq.com)`
+          `⚠️ API key required. Get a key at [console.groq.com](https://console.groq.com)`
         );
       } else if (provider === 'claude' && !this.claudeService.isConfigured()) {
         this.appendAssistantMessage(
@@ -314,20 +319,8 @@ export class PoolLogicChatService {
     if (key) {
       this.appendAssistantMessage(
         `⚡ **Groq API Key Set**\n\n` +
-        `Connected to Groq's ultra-fast LLaMA 3.1 70B. Free and fast!`
+        `Connected to Groq's ultra-fast LLaMA 3.1 70B.`
       );
-    }
-  }
-
-  toggleDemoMode(): void {
-    // Cycle through providers: demo -> groq -> claude -> demo
-    const current = this.claudeService.provider();
-    if (current === 'demo') {
-      this.setAIProvider('groq');
-    } else if (current === 'groq') {
-      this.setAIProvider('claude');
-    } else {
-      this.setAIProvider('demo');
     }
   }
 
@@ -344,26 +337,16 @@ export class PoolLogicChatService {
   // ── Intent Processing ─────────────────────────────────────────────
 
   private async processUserInput(input: string): Promise<void> {
-    // ── AI Mode: Use Claude for intent classification ───────────────
-    if (this.claudeService.isEnabled()) {
-      await this.processWithClaude(input);
-      return;
-    }
-
-    // ── Rule-based Mode: Keyword matching ───────────────────────────
-    await this.processWithKeywords(input);
+    // Always use AI (Groq or Claude) for intent classification
+    await this.processWithClaude(input);
   }
 
   private async processWithClaude(input: string): Promise<void> {
     const providerInfo = this.claudeService.providerInfo();
     this.updateAgentStatus('validating', 10, `Analyzing with ${providerInfo.name}...`);
 
-    const context = {
-      loanCount: this.uploadedLoans().length,
-      eligibleCount: this.validationResults().filter(r => r.eligible).length,
-      ineligibleCount: this.validationResults().filter(r => !r.eligible).length,
-      hasValidationResults: this.validationResults().length > 0,
-    };
+    // Build comprehensive context with loan data for AI
+    const context = this.buildAIContext();
 
     try {
       const response = await this.claudeService.classifyIntent(input, context);
@@ -373,7 +356,13 @@ export class PoolLogicChatService {
       // Check for errors from the AI service
       const error = this.claudeService.lastError();
       if (error) {
-        this.appendAssistantMessage(`⚠️ **API Error**: ${error}\n\nFalling back to demo mode.`);
+        this.appendAssistantMessage(`⚠️ **API Error**: ${error}\n\nPlease check your API key configuration.`);
+        return;
+      }
+
+      // If AI provided a direct data query answer, use it
+      if (response.intent.action === 'data-query' && response.message) {
+        this.appendAssistantMessage(response.message);
         return;
       }
 
@@ -391,66 +380,60 @@ export class PoolLogicChatService {
     }
   }
 
-  private async processWithKeywords(input: string): Promise<void> {
-    const lower = input.toLowerCase().trim();
+  /** Build comprehensive context with loan data for AI analysis */
+  private buildAIContext(): LoanDataContext {
+    const loans = this.uploadedLoans();
+    const validationResults = this.validationResults();
+    
+    const context: LoanDataContext = {
+      loanCount: loans.length,
+      eligibleCount: validationResults.filter(r => r.eligible).length,
+      ineligibleCount: validationResults.filter(r => !r.eligible).length,
+      hasValidationResults: validationResults.length > 0,
+    };
 
-    if (this.matchesIntent(lower, ['validate', 'check', 'eligibility', 'run validation', 'check eligibility', 'verify'])) {
-      await this.handleValidation();
-      return;
+    if (loans.length > 0) {
+      // Convert all loans to samples for AI analysis
+      context.allLoans = loans.map(loan => ({
+        loanNumber: loan.loanNumber,
+        poolNumber: loan.poolNumber || '',
+        interestRate: loan.interestRate,
+        couponRate: loan.couponRate,
+        upb: loan.upb,
+        loanAgeMonths: loan.loanAgeMonths,
+        loanStatusCode: loan.loanStatusCode,
+        propertyType: loan.propertyType,
+        mbsPoolPrefix: loan.mbsPoolPrefix || '',
+        specialCategory: loan.specialCategory || undefined,
+      }));
+
+      // Also provide first 10 as sample for quicker reference
+      context.sampleLoans = context.allLoans.slice(0, 10);
+
+      // Calculate statistics
+      const totalUPB = loans.reduce((sum, l) => sum + l.upb, 0);
+      const avgInterestRate = loans.reduce((sum, l) => sum + l.interestRate, 0) / loans.length;
+      const avgCouponRate = loans.reduce((sum, l) => sum + l.couponRate, 0) / loans.length;
+      const avgUPB = totalUPB / loans.length;
+      const avgLoanAge = loans.reduce((sum, l) => sum + l.loanAgeMonths, 0) / loans.length;
+      
+      const propertyTypes = [...new Set(loans.map(l => l.propertyType))];
+      const statusCodes = [...new Set(loans.map(l => l.loanStatusCode))];
+      const prefixes = [...new Set(loans.map(l => l.mbsPoolPrefix).filter(Boolean))];
+
+      context.stats = {
+        avgInterestRate,
+        avgCouponRate,
+        avgUPB,
+        avgLoanAge,
+        totalUPB,
+        propertyTypes,
+        statusCodes,
+        prefixes,
+      };
     }
 
-    if (this.matchesIntent(lower, ['build pool', 'construct pool', 'create pool', 'pool construction', 'build a pool'])) {
-      await this.handleBuildPool();
-      return;
-    }
-
-    if (this.matchesIntent(lower, ['filter', 'find loans', 'search loans', 'show loans with', 'loans where'])) {
-      await this.handleFilter(input);
-      return;
-    }
-
-    if (this.matchesIntent(lower, ['show rules', 'list rules', 'what rules', 'eligibility rules', 'poollogic rules'])) {
-      this.handleShowRules();
-      return;
-    }
-
-    if (lower.startsWith('explain rule') || lower.startsWith('explain ') && lower.includes('rule')) {
-      const ruleId = input.match(/[A-Z]+-\d+/)?.[0];
-      if (ruleId) {
-        const explanation = this.validationService.explainRule(ruleId);
-        this.appendAssistantMessage(explanation);
-      } else {
-        this.appendAssistantMessage('Please specify a rule ID (e.g., "explain rule RATE-001"). Type **"show rules"** to see all available rules.');
-      }
-      return;
-    }
-
-    if (this.matchesIntent(lower, ['summary', 'pool summary', 'show summary', 'results summary'])) {
-      this.handleShowSummary();
-      return;
-    }
-
-    if (this.matchesIntent(lower, ['show sample', 'preview', 'show data', 'sample data', 'preview data'])) {
-      this.handleShowSampleData();
-      return;
-    }
-
-    if (this.matchesIntent(lower, ['ineligible', 'failed', 'rejected', 'show ineligible', 'show failed'])) {
-      this.handleShowIneligible();
-      return;
-    }
-
-    if (this.matchesIntent(lower, ['help', 'what can you do', 'commands', 'how to use'])) {
-      this.handleHelp();
-      return;
-    }
-
-    if (this.matchesIntent(lower, ['load sample', 'demo data', 'sample loans', 'load demo'])) {
-      this.loadSampleData();
-      return;
-    }
-
-    this.handleGeneralQuestion(input);
+    return context;
   }
 
   private async dispatchIntent(
@@ -466,7 +449,17 @@ export class PoolLogicChatService {
         await this.handleBuildPool();
         break;
       case 'filter':
-        await this.handleFilter(originalInput);
+        // Use AI-generated filter parameters if available
+        if (parameters?.['filter']) {
+          await this.handleFilterWithParams(parameters['filter']);
+        } else {
+          await this.handleFilter(originalInput);
+        }
+        break;
+      case 'data-query':
+        // AI already analyzed the data and provided response
+        // This is handled in processWithClaude before dispatch
+        this.handleGeneralQuestion(originalInput);
         break;
       case 'show-rules':
         this.handleShowRules();
@@ -491,6 +484,10 @@ export class PoolLogicChatService {
       case 'show-ineligible':
         this.handleShowIneligible();
         break;
+      case 'download-ineligible':
+        const format = parameters?.['format'] || this.parseExportFormat(originalInput) || 'csv';
+        this.exportIneligibleLoans(format as ExportFormat);
+        break;
       case 'help':
         this.handleHelp();
         break;
@@ -502,6 +499,48 @@ export class PoolLogicChatService {
     }
   }
 
+  /** Handle filter with AI-generated parameters */
+  private async handleFilterWithParams(filter: LoanFilter): Promise<void> {
+    const loans = this.uploadedLoans();
+    if (loans.length === 0) {
+      this.appendAssistantMessage('No loan data is currently loaded. Please upload data first.');
+      return;
+    }
+
+    this.updateAgentStatus('filtering', 50, 'Applying AI-generated filters...');
+    await this.delay(300);
+
+    const filtered = this.validationService.filterLoans(loans, filter);
+    const appliedFilters = this.describeAppliedFilters(filter);
+
+    let response = `## Filter Results\n\n`;
+    if (appliedFilters.length > 0) {
+      response += `**Active filters:** ${appliedFilters.join(' · ')}\n\n`;
+    }
+    response += `Applied filters to **${loans.length} loans** — **${filtered.length}** match your criteria.\n\n`;
+
+    if (filtered.length > 0 && filtered.length <= 10) {
+      response += `| Loan # | Pool | Prefix | Rate | Coupon | UPB | Age | Status | Property | Special |\n`;
+      response += `|---|---|---|---|---|---|---|---|---|---|\n`;
+      filtered.forEach(l => {
+        response += `| ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.mbsPoolPrefix || '-'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode} | ${l.propertyType} | ${l.specialCategory || '-'} |\n`;
+      });
+    } else if (filtered.length > 10) {
+      response += `Showing first 10 of ${filtered.length} matches:\n\n`;
+      response += `| Loan # | Pool | Rate | Coupon | UPB | Age | Status | Property |\n`;
+      response += `|---|---|---|---|---|---|---|---|\n`;
+      filtered.slice(0, 10).forEach(l => {
+        response += `| ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode} | ${l.propertyType} |\n`;
+      });
+    } else {
+      response += `No loans match the specified criteria. Try broadening your filters.\n\n`;
+      response += `**Available filter criteria:** coupon range, loan age, status, property type, prefix, UPB range, special category`;
+    }
+
+    this.appendAssistantMessage(response);
+    this.updateAgentStatus('idle', 0, '');
+  }
+
   // ── Intent Handlers ───────────────────────────────────────────────
 
   private async handleValidation(): Promise<void> {
@@ -511,7 +550,11 @@ export class PoolLogicChatService {
       return;
     }
 
-    this.updateAgentStatus('validating', 0, 'Calling eligibility API...');
+    // ── Load rules from API first ───────────────────────────────────
+    this.updateAgentStatus('validating', 0, 'Loading validation rules...');
+    await this.validationService.loadRules();
+
+    this.updateAgentStatus('validating', 10, 'Calling eligibility API...');
 
     // ── Try remote API first ────────────────────────────────────────
     const apiResult = await this.eligibilityApi.evaluate(loans);
@@ -843,21 +886,115 @@ export class PoolLogicChatService {
       return;
     }
 
+    const loans = this.uploadedLoans();
+    const eligibleLoans = loans.filter(l => 
+      results.find(r => r.loanNumber === l.loanNumber)?.eligible
+    );
+
     let response = `## Ineligible Loan Details\n\n`;
-    response += `**${ineligible.length} loan(s)** failed eligibility checks:\n\n`;
+    response += `**${ineligible.length} loan(s)** failed eligibility checks.\n\n`;
+    response += `📥 **Download Report:** Type \`download ineligible csv\`, \`download ineligible excel\`, \`download ineligible pdf\`, or \`download ineligible json\`\n\n`;
 
     ineligible.forEach(r => {
-      response += `### ${r.loanNumber} — Pool: ${r.poolNumber || 'N/A'} — Score: ${r.score}/100\n\n`;
-      response += `| Severity | Rule | Actual | Required | Explanation | Action | Reference |\n|---|---|---|---|---|---|---|\n`;
+      const loan = loans.find(l => l.loanNumber === r.loanNumber);
+      response += `### 📋 ${r.loanNumber} — Pool: ${r.poolNumber || 'N/A'} — Score: ${r.score}/100\n\n`;
+      
+      // Violations table
+      response += `| Severity | Rule | Actual | Required | Explanation |\n|---|---|---|---|---|\n`;
       r.violations.forEach(v => {
         const icon = v.severity === 'error' ? '❌' : '⚠️';
-        response += `| ${icon} ${v.severity} | ${v.rule.ruleName} (${v.rule.ruleId}) | ${v.actualValue} | ${v.expectedValue} | ${v.explanation} | ${v.recommendedAction} | ${v.rule.guideReference} |\n`;
+        response += `| ${icon} ${v.severity} | ${v.rule.ruleName} (${v.rule.ruleId}) | ${v.actualValue} | ${v.expectedValue} | ${v.explanation} |\n`;
       });
       response += `\n`;
+
+      // How to fix section
+      response += `#### 💡 How to Fix:\n`;
+      r.violations.forEach(v => {
+        const fix = this.generateFixSuggestion(v.rule.ruleId, v.actualValue, v.expectedValue, loan);
+        response += `- **${v.rule.ruleId}:** ${fix}\n`;
+      });
+      response += `\n`;
+
+      // Similar eligible loans that could replace this one
+      if (loan && eligibleLoans.length > 0) {
+        const similar = this.exportService.findSimilarEligibleLoans(loan, eligibleLoans, 2);
+        if (similar.length > 0) {
+          response += `#### 🔄 Similar Eligible Loans (potential replacements):\n`;
+          response += `| Loan # | Rate | UPB | Property | Age |\n|---|---|---|---|---|\n`;
+          similar.forEach(sl => {
+            response += `| ${sl.loanNumber} | ${sl.interestRate}% | $${sl.upb.toLocaleString()} | ${sl.propertyType} | ${sl.loanAgeMonths}mo |\n`;
+          });
+          response += `\n`;
+        }
+      }
     });
 
-    response += `> **Action Required:** Remove or correct the above loans before proceeding with pool construction.`;
+    response += `---\n`;
+    response += `> 📊 **Export Options:** Download this report with full details and recommendations.\n`;
+    response += `> - \`download ineligible csv\` - Spreadsheet format\n`;
+    response += `> - \`download ineligible excel\` - Excel-compatible format\n`;
+    response += `> - \`download ineligible pdf\` - Printable report with fix suggestions\n`;
+    response += `> - \`download ineligible json\` - Machine-readable format\n`;
+
     this.appendAssistantMessage(response);
+  }
+
+  /** Generate specific fix suggestions for a rule violation */
+  private generateFixSuggestion(ruleId: string, actual: string, expected: string, loan?: LoanRecord): string {
+    switch (ruleId) {
+      case 'RATE-001':
+        return `Adjust interest rate from ${actual} to within 0-12% range. Consider rate modification or refinancing.`;
+      case 'RATE-002':
+        return `Reduce coupon rate (${actual}) to be ≤ interest rate. Reassign to a lower coupon pool.`;
+      case 'RATE-003':
+        return `Correct net yield (${actual}) to be between 0 and coupon rate.`;
+      case 'BAL-001':
+        return `Loan has ${actual} UPB - appears paid off or has data error. Remove from pool.`;
+      case 'BAL-002':
+        return `Reduce investor balance to ≤ UPB. Current: ${actual}, max allowed: ${expected}.`;
+      case 'BAL-003':
+        return `UPB ${actual} exceeds $766,550 conforming limit. Consider high-balance designation or exclude.`;
+      case 'PROP-001':
+        return `Property type "${actual}" is ineligible. Only SF, CO, CP, PU, MH, 2-4 accepted.`;
+      case 'STATUS-001':
+        return `Status "${actual}" indicates non-performing. Wait for status update to Active (A) or Current (C).`;
+      case 'AGE-001':
+        const currentAge = parseInt(actual) || 0;
+        const monthsNeeded = Math.max(0, 4 - currentAge);
+        return `Loan needs ${monthsNeeded} more month(s) of seasoning. Current: ${actual} months, required: 4+ months.`;
+      case 'POOL-001':
+        return `Assign a valid pool number (e.g., PL-001) before delivery.`;
+      case 'PREFIX-001':
+        return `Assign valid MBS prefix: FG (Gold), FH (ARM), or FN (Fixed). Current: "${actual || 'none'}".`;
+      default:
+        return `Review ${ruleId} requirements and correct ${actual} to meet ${expected} criteria.`;
+    }
+  }
+
+  /** Export ineligible loans to specified format */
+  exportIneligibleLoans(format: ExportFormat): void {
+    const results = this.validationResults();
+    const ineligible = results.filter(r => !r.eligible);
+    
+    if (ineligible.length === 0) {
+      this.appendAssistantMessage('No ineligible loans to export. Run validation first.');
+      return;
+    }
+
+    const loans = this.uploadedLoans();
+    this.exportService.exportIneligibleLoans(ineligible, loans, format, {
+      includeRecommendations: true,
+      includeSimilarLoans: true
+    });
+
+    const formatLabels: Record<ExportFormat, string> = {
+      csv: 'CSV spreadsheet',
+      excel: 'Excel file',
+      json: 'JSON data',
+      pdf: 'PDF report'
+    };
+
+    this.appendAssistantMessage(`✅ Downloading ${ineligible.length} ineligible loan(s) as ${formatLabels[format]}...`);
   }
 
   private handleHelp(): void {
@@ -875,6 +1012,12 @@ export class PoolLogicChatService {
       `| **"summary"** | Display current pool summary metrics |\n` +
       `| **"show sample"** | Preview loaded loan data |\n` +
       `| **"help"** | Show this command reference |\n\n` +
+      `### 📥 Export Commands\n\n` +
+      `| Command | Description |\n|---|---|\n` +
+      `| **"download ineligible csv"** | Download ineligible loans as CSV spreadsheet |\n` +
+      `| **"download ineligible excel"** | Download as Excel-compatible file |\n` +
+      `| **"download ineligible pdf"** | Download as printable PDF report with fix suggestions |\n` +
+      `| **"download ineligible json"** | Download as machine-readable JSON |\n\n` +
       `**Required CSV/JSON fields:** ${[...REQUIRED_LOAN_FIELDS].join(', ')}\n\n` +
       `You can also ask natural language questions about loans, rules, or MortgageMax guidelines.`
     );
@@ -1104,8 +1247,26 @@ export class PoolLogicChatService {
     ));
   }
 
-  private matchesIntent(input: string, keywords: string[]): boolean {
-    return keywords.some(k => input.includes(k));
+  /** Parse export format from user input */
+  private parseExportFormat(input: string): ExportFormat | null {
+    const lower = input.toLowerCase();
+    if (lower.includes('excel') || lower.includes('xlsx') || lower.includes('xls')) {
+      return 'excel';
+    }
+    if (lower.includes('pdf')) {
+      return 'pdf';
+    }
+    if (lower.includes('json')) {
+      return 'json';
+    }
+    if (lower.includes('csv')) {
+      return 'csv';
+    }
+    // Default to CSV if format not specified but download is requested
+    if (lower.includes('download')) {
+      return 'csv';
+    }
+    return null;
   }
 
   private parseFilterFromInput(input: string): LoanFilter {

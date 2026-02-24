@@ -3,7 +3,7 @@ import { environment } from '../../../../environments/environment';
 
 // ── Types ───────────────────────────────────────────────────────────
 
-export type AIProvider = 'groq' | 'claude' | 'demo';
+export type AIProvider = 'groq' | 'claude';
 
 export interface AIMessage {
   role: 'user' | 'assistant';
@@ -11,9 +11,47 @@ export interface AIMessage {
 }
 
 export interface AIIntent {
-  action: 'validate' | 'build-pool' | 'filter' | 'show-rules' | 'explain-rule' | 'summary' | 'show-ineligible' | 'help' | 'load-sample' | 'general';
+  action: 'validate' | 'build-pool' | 'filter' | 'show-rules' | 'explain-rule' | 'summary' | 'show-ineligible' | 'download-ineligible' | 'help' | 'load-sample' | 'general' | 'data-query';
   parameters?: Record<string, any>;
   confidence: number;
+}
+
+/** Loan data summary sent to AI for context */
+export interface LoanDataContext {
+  loanCount: number;
+  eligibleCount?: number;
+  ineligibleCount?: number;
+  hasValidationResults: boolean;
+  /** Sample of loan data (first 10 loans) for AI to analyze */
+  sampleLoans?: LoanSample[];
+  /** All loans for complete analysis */
+  allLoans?: LoanSample[];
+  /** Summary statistics */
+  stats?: LoanStats;
+}
+
+export interface LoanSample {
+  loanNumber: string;
+  poolNumber: string;
+  interestRate: number;
+  couponRate: number;
+  upb: number;
+  loanAgeMonths: number;
+  loanStatusCode: string;
+  propertyType: string;
+  mbsPoolPrefix: string;
+  specialCategory?: string;
+}
+
+export interface LoanStats {
+  avgInterestRate: number;
+  avgCouponRate: number;
+  avgUPB: number;
+  avgLoanAge: number;
+  totalUPB: number;
+  propertyTypes: string[];
+  statusCodes: string[];
+  prefixes: string[];
 }
 
 export interface AIResponse {
@@ -44,107 +82,11 @@ interface AnthropicApiResponse {
   usage: { input_tokens: number; output_tokens: number };
 }
 
-// ── Demo Mode Response Templates ────────────────────────────────────
-
-const DEMO_RESPONSES: Record<AIIntent['action'], (ctx?: any, params?: any) => string> = {
-  'validate': (ctx) => {
-    if (!ctx?.loanCount) return "I'll run eligibility validation once you upload loan data. Try 'load sample' to get started with demo loans.";
-    return `Running validation against 11 MortgageMax eligibility rules for ${ctx.loanCount} loans. I'll check interest rates, balances, property types, loan age, and pool assignments.`;
-  },
-  'build-pool': (ctx) => {
-    if (!ctx?.eligibleCount) return "Let's validate the loans first to identify eligible candidates. Type 'validate' to run eligibility checks.";
-    return `Building a compliant pool from ${ctx.eligibleCount} eligible loans. I'll calculate weighted average coupon, net yield, and verify pool composition requirements.`;
-  },
-  'filter': (ctx, params) => {
-    const criteria = params?.criteria || params?.filterCriteria || 'your specified criteria';
-    if (!ctx?.loanCount) return "Upload loan data first, then I can filter by rate, UPB, property type, age, status, or any combination.";
-    return `Filtering ${ctx.loanCount} loans based on ${criteria}. I'll show matching loans that meet your criteria.`;
-  },
-  'show-rules': () => `Here are the 11 MortgageMax eligibility rules I enforce:
-
-**Rate Rules:**
-• RATE-001: Interest rate must be >0% and ≤12%
-• RATE-002: Coupon rate ≤ interest rate
-• RATE-003: Net yield between 0 and coupon rate
-
-**Balance Rules:**
-• BAL-001: UPB must be positive
-• BAL-002: Investor balance ≤ UPB
-• BAL-003: Conforming limit $766,550 (2025)
-
-**Property & Status:**
-• PROP-001: Eligible types: SF, CO, CP, PU, MH, 2-4
-• STATUS-001: Active status (A or C)
-
-**Pool Requirements:**
-• AGE-001: Minimum 4 months seasoning
-• POOL-001: Pool number assigned
-• PREFIX-001: Valid MBS prefix (FG, FH, FN)`,
-
-  'explain-rule': (ctx, params) => {
-    const ruleId = params?.ruleId?.toUpperCase() || '';
-    const explanations: Record<string, string> = {
-      'RATE-001': `**RATE-001: Interest Rate Range**\nThe note rate must be greater than 0% and not exceed 12%. This ensures loans have reasonable rates for MBS investors.`,
-      'RATE-002': `**RATE-002: Coupon vs Interest Rate**\nThe pool coupon rate cannot exceed the loan's interest rate. The difference (servicing spread) compensates the servicer.`,
-      'RATE-003': `**RATE-003: Net Yield Range**\nNet yield must be ≥0 and ≤ coupon rate. Net yield = coupon minus guarantee fee.`,
-      'BAL-001': `**BAL-001: Positive UPB**\nUnpaid Principal Balance must be greater than $0. Zero or negative balances indicate paid-off loans.`,
-      'BAL-002': `**BAL-002: Investor Balance**\nCurrent investor balance cannot exceed UPB. The investor owns at most 100% of the loan.`,
-      'BAL-003': `**BAL-003: Conforming Loan Limit**\nUPB cannot exceed $766,550 (2025 limit for most areas).`,
-      'PROP-001': `**PROP-001: Property Type**\nEligible property types: SF (Single Family), CO (Condo), CP (Co-op), PU (PUD), MH (Manufactured Housing), 2-4 (2-4 Unit).`,
-      'STATUS-001': `**STATUS-001: Active Status**\nLoan status must be Active (A) or Current (C). Delinquent loans are ineligible.`,
-      'AGE-001': `**AGE-001: Minimum Age**\nLoans must be at least 4 months old (seasoned).`,
-      'POOL-001': `**POOL-001: Pool Assignment**\nLoans must have an assigned pool number for delivery.`,
-      'PREFIX-001': `**PREFIX-001: MBS Prefix**\nValid prefixes: FG (Gold PC), FH (ARM), FN (Fixed Rate).`,
-    };
-    return explanations[ruleId] || `I can explain any of these rules: RATE-001, RATE-002, RATE-003, BAL-001, BAL-002, BAL-003, PROP-001, STATUS-001, AGE-001, POOL-001, PREFIX-001.`;
-  },
-
-  'summary': (ctx) => {
-    if (!ctx?.loanCount) return "No loans loaded yet. Upload a CSV/JSON file or type 'load sample' to see summary metrics.";
-    const eligible = ctx.eligibleCount ?? 'unknown';
-    const ineligible = ctx.ineligibleCount ?? 'unknown';
-    return `**Portfolio Summary:**\n• Total loans: ${ctx.loanCount}\n• Eligible: ${eligible}\n• Ineligible: ${ineligible}\n• Validation status: ${ctx.hasValidationResults ? 'Complete' : 'Pending'}\n\nType 'validate' for detailed eligibility analysis.`;
-  },
-
-  'show-ineligible': (ctx) => {
-    if (!ctx?.hasValidationResults) return "Run validation first to identify ineligible loans. Type 'validate' to start.";
-    if (ctx.ineligibleCount === 0) return "All loans passed eligibility checks! You can proceed to build a pool.";
-    return `Found ${ctx.ineligibleCount} ineligible loans. I'll display them with their specific rule violations.`;
-  },
-
-  'help': () => `**Loan Pool Advisor Commands:**
-
-📂 **Data Management:**
-• \`load sample\` - Load demo loan data
-• \`upload\` - Upload CSV or JSON file
-• \`clear\` - Clear current session
-
-✅ **Validation:**
-• \`validate\` - Run eligibility checks
-• \`show ineligible\` - View failed loans
-• \`show rules\` - List all rules
-• \`explain rule [ID]\` - Rule details
-
-📊 **Analysis:**
-• \`summary\` - Portfolio metrics
-• \`filter [criteria]\` - Find specific loans
-• \`build pool\` - Construct compliant pool
-
-💡 Or just ask naturally - I understand questions like "which loans failed?" or "what's wrong with the rates?"`,
-
-  'load-sample': () => "Loading sample loan portfolio with 15 diverse loans including some intentional rule violations for testing.",
-
-  'general': (ctx) => {
-    if (!ctx?.loanCount) {
-      return "I'm your Loan Pool Advisor. I help validate loans against MortgageMax guidelines and build compliant pools. Start by typing 'load sample' or uploading your loan data.";
-    }
-    return "I'm analyzing your question. Could you be more specific? I can validate loans, explain rules, filter data, or help build pools.";
-  },
-};
-
 // ── System Prompt (for live API modes) ──────────────────────────────
 
 const LOAN_ADVISOR_SYSTEM_PROMPT = `You are Loan Pool Advisor, an AI assistant specialized in MortgageMax mortgage loan validation and pool construction.
+
+You have DIRECT ACCESS to the user's loan data. When the user asks questions about their loans, you MUST analyze the provided loan data and give specific, accurate answers with exact numbers and loan references.
 
 ## Your Capabilities
 1. **Validate loans** against MortgageMax Single-Family Seller/Servicer Guide eligibility rules
@@ -183,39 +125,74 @@ You MUST respond with valid JSON in this exact format:
 ## Intent Mapping
 - User wants to check/validate/verify loans → action: "validate"
 - User wants to build/construct/create a pool → action: "build-pool"  
-- User wants to filter/find/search loans → action: "filter" (include filter criteria in parameters)
+- User wants to filter/find/search loans → action: "filter" (include filter object in parameters.filter with fields: minCouponRate, maxCouponRate, minInterestRate, maxInterestRate, minUPB, maxUPB, minLoanAge, maxLoanAge, loanStatusCode, propertyTypes[], mbsPoolPrefix, specialCategories[])
 - User asks about rules/eligibility requirements → action: "show-rules"
 - User asks to explain a specific rule → action: "explain-rule" (include ruleId in parameters)
 - User asks for summary/metrics → action: "summary"
 - User asks about failed/ineligible loans → action: "show-ineligible"
+- User wants to download/export ineligible loans → action: "download-ineligible" (include parameters.format: "csv" | "excel" | "pdf" | "json")
 - User asks for help/commands → action: "help"
 - User wants sample/demo data → action: "load-sample"
+- User asks a specific data question that YOU can answer from the provided loan data → action: "data-query" (IMPORTANT: analyze the loan data and provide the COMPLETE answer in the message field with specific loan numbers, values, and calculations)
 - General questions about loans/guidelines → action: "general"
+
+## Data Query Examples
+When action is "data-query", analyze the provided loan data and answer directly in the message:
+- "How many loans have rate above 5%?" → Count and list specific loan numbers
+- "What is the average UPB?" → Calculate and provide the exact value
+- "Show me the highest interest rate loan" → Find and describe it with all details
+- "Which loans are in pool PL-001?" → List them with key details
+- "What property types do we have?" → List unique property types with counts
+- "Compare loans by coupon rate" → Sort and present the comparison
+
+## Response Formatting
+- ALWAYS use markdown tables when displaying loan data, comparisons, or lists with multiple attributes
+- Tables should have clear headers and proper alignment
+- For data queries with multiple loans, present results in a table
+- Include relevant columns based on the query context
+- Use | for column separators and --- for header delimiter
 
 ## Guidelines
 - Be concise but thorough
 - Reference specific rule IDs when discussing eligibility
 - If unsure, ask clarifying questions
-- Never make up loan data - only analyze what's provided
-- Suggest next steps when appropriate`;
+- When loan data is provided, ALWAYS analyze it to answer questions accurately
+- For data queries, include specific loan numbers and values in your response
+- When filtering, generate precise filter parameters based on user intent
+- For questions about the data, calculate statistics and provide exact numbers
+- ALWAYS format multi-row data as tables for readability
+- Suggest next steps when appropriate
+
+## Filter Parameter Schema
+When action is "filter", include parameters.filter with applicable fields:
+{
+  "minCouponRate": number,
+  "maxCouponRate": number,
+  "minInterestRate": number,  
+  "maxInterestRate": number,
+  "minUPB": number,
+  "maxUPB": number,
+  "minLoanAge": number,
+  "maxLoanAge": number,
+  "loanStatusCode": "A" | "C" | "D",
+  "propertyTypes": ["SF", "CO", "CP", "PU", "MH", "2-4"],
+  "mbsPoolPrefix": "FG" | "FH" | "FN",
+  "poolNumber": string,
+  "specialCategories": string[]
+}`;
 
 // ── Provider Display Names ──────────────────────────────────────────
 
 export const PROVIDER_INFO: Record<AIProvider, { name: string; description: string; icon: string }> = {
   groq: { 
     name: 'Groq', 
-    description: 'Free, ultra-fast LLaMA 3.1 70B', 
+    description: 'Ultra-fast LLaMA 3.1 70B', 
     icon: '⚡' 
   },
   claude: { 
     name: 'Claude', 
     description: 'Anthropic Claude Sonnet (paid)', 
     icon: '🧠' 
-  },
-  demo: { 
-    name: 'Demo', 
-    description: 'Offline pattern matching', 
-    icon: '🎯' 
   },
 };
 
@@ -254,7 +231,7 @@ export class ClaudeAIService {
     }
   }
   
-  // Current provider - defaults to Groq (free), persisted to localStorage
+  // Current provider - defaults to Groq, persisted to localStorage
   readonly provider = signal<AIProvider>(
     (this.loadFromStorage(this.STORAGE_KEYS.provider) as AIProvider) ||
     (environment.ai?.defaultProvider as AIProvider) || 
@@ -270,14 +247,12 @@ export class ClaudeAIService {
   
   readonly isConfigured = computed(() => {
     const p = this.provider();
-    if (p === 'demo') return true;
     if (p === 'groq') return this.groqApiKey() !== '';
     if (p === 'claude') return this.claudeApiKey() !== '' || (environment.ai?.claude?.proxyUrl ?? '') !== '';
     return false;
   });
 
   // Legacy compatibility
-  readonly demoMode = computed(() => this.provider() === 'demo');
   readonly aiModeEnabled = computed(() => this.isEnabled());
   readonly aiConfigured = computed(() => this.isConfigured());
   readonly aiModeLabel = computed(() => PROVIDER_INFO[this.provider()].name);
@@ -312,10 +287,6 @@ export class ClaudeAIService {
     this.setClaudeApiKey(key);
   }
 
-  enableDemoMode(): void {
-    this.setProvider('demo');
-  }
-
   enableLiveMode(): void {
     if (this.groqApiKey()) {
       this.setProvider('groq');
@@ -342,28 +313,13 @@ export class ClaudeAIService {
 
   async classifyIntent(
     userInput: string,
-    context?: {
-      loanCount?: number;
-      eligibleCount?: number;
-      ineligibleCount?: number;
-      hasValidationResults?: boolean;
-    }
+    context?: LoanDataContext
   ): Promise<AIResponse> {
-    if (!this.isEnabled()) {
-      return this.buildDemoResponse(userInput, context);
-    }
-
     const currentProvider = this.provider();
 
-    // Demo mode: use smart local classification
-    if (currentProvider === 'demo') {
-      await new Promise(resolve => setTimeout(resolve, 150 + Math.random() * 200));
-      return this.buildDemoResponse(userInput, context);
-    }
-
-    // Live mode: call appropriate API
+    // Always use Groq for responses
     try {
-      // Build context message
+      // Build context message with loan data
       let contextMsg = '';
       if (context) {
         const parts: string[] = [];
@@ -373,8 +329,22 @@ export class ClaudeAIService {
         if (context.hasValidationResults && context.eligibleCount !== undefined) {
           parts.push(`${context.eligibleCount} eligible, ${context.ineligibleCount} ineligible`);
         }
+        
+        // Add loan statistics
+        if (context.stats) {
+          parts.push(`Avg Rate: ${context.stats.avgInterestRate.toFixed(2)}%`);
+          parts.push(`Total UPB: $${context.stats.totalUPB.toLocaleString()}`);
+          parts.push(`Property Types: ${context.stats.propertyTypes.join(', ')}`);
+        }
+        
         if (parts.length > 0) {
           contextMsg = `\n\n[Context: ${parts.join('; ')}]`;
+        }
+        
+        // Include full loan data for accurate analysis
+        if (context.allLoans && context.allLoans.length > 0) {
+          contextMsg += `\n\n[LOAN DATA - You MUST use this to answer questions accurately]\n`;
+          contextMsg += JSON.stringify(context.allLoans, null, 0);
         }
       }
 
@@ -409,8 +379,12 @@ export class ClaudeAIService {
     } catch (error: any) {
       console.error(`${currentProvider} API error:`, error);
       this.lastError.set(error.message || `Failed to connect to ${currentProvider}`);
-      // Fall back to demo mode on API errors
-      return this.buildDemoResponse(userInput, context);
+      // Return error response
+      return {
+        intent: { action: 'general', confidence: 0 },
+        message: `⚠️ **API Error**: ${error.message || 'Failed to connect to AI service'}. Please check your API key configuration.`,
+        provider: currentProvider,
+      };
     }
   }
 
@@ -420,7 +394,7 @@ export class ClaudeAIService {
     const apiKey = this.groqApiKey();
     
     if (!apiKey) {
-      throw new Error('Groq API key not configured. Get a free key at console.groq.com');
+      throw new Error('Groq API key not configured. Get a key at console.groq.com');
     }
 
     const requestBody = {
@@ -515,7 +489,12 @@ export class ClaudeAIService {
 
   private parseAIResponse(text: string, provider: AIProvider): AIResponse {
     try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      // Strip markdown code block markers (```json ... ``` or ```...```)
+      let cleanedText = text
+        .replace(/^\s*```(?:json)?\s*/i, '') // Remove opening ```json or ```
+        .replace(/\s*```\s*$/i, '');           // Remove closing ```
+      
+      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         return {
@@ -538,127 +517,6 @@ export class ClaudeAIService {
       message: text,
       provider,
     };
-  }
-
-  // ── Demo Mode Classification ──────────────────────────────────────
-
-  private buildDemoResponse(input: string, context?: any): AIResponse {
-    const lower = input.toLowerCase().trim();
-    
-    const ruleMatch = lower.match(/\b(rate|bal|prop|status|age|pool|prefix)-?0*(\d+)\b/i) 
-                   || lower.match(/\brule\s+(rate|bal|prop|status|age|pool|prefix)[\s-]?0*(\d+)/i);
-    const ruleId = ruleMatch ? `${ruleMatch[1].toUpperCase()}-00${ruleMatch[2]}`.replace(/0+(\d{3})/, '$1') : null;
-    
-    const filterCriteria = this.extractFilterCriteria(lower);
-    
-    let action: AIIntent['action'] = 'general';
-    let confidence = 0.85;
-    let parameters: Record<string, any> = {};
-
-    if (/^(validate|check eligibility|run validation|verify loans?)$/i.test(lower)) {
-      action = 'validate';
-      confidence = 0.98;
-    }
-    else if (/^(build pool|create pool|construct pool)$/i.test(lower)) {
-      action = 'build-pool';
-      confidence = 0.98;
-    }
-    else if (/^(show rules?|list rules?|what are the rules?)$/i.test(lower)) {
-      action = 'show-rules';
-      confidence = 0.98;
-    }
-    else if (/^(help|commands?|what can you do)$/i.test(lower)) {
-      action = 'help';
-      confidence = 0.98;
-    }
-    else if (/^(load sample|sample data|demo data|load demo)$/i.test(lower)) {
-      action = 'load-sample';
-      confidence = 0.98;
-    }
-    else if (/^(summary|show summary|portfolio summary|metrics)$/i.test(lower)) {
-      action = 'summary';
-      confidence = 0.98;
-    }
-    else if (/validate|check.*eligib|verify.*loan|run.*check|eligibility\s*check/.test(lower)) {
-      action = 'validate';
-      confidence = 0.90;
-    }
-    else if (/build.*pool|construct.*pool|create.*pool|make.*pool|pool.*build/.test(lower)) {
-      action = 'build-pool';
-      confidence = 0.90;
-    }
-    else if (/explain.*rule|what.*is.*rule|tell.*about.*rule|rule.*mean|how.*does.*rule/.test(lower) || ruleId) {
-      action = 'explain-rule';
-      confidence = ruleId ? 0.95 : 0.80;
-      if (ruleId) parameters['ruleId'] = ruleId;
-    }
-    else if (/show.*rule|list.*rule|what.*rule|all.*rule|rules\?/.test(lower)) {
-      action = 'show-rules';
-      confidence = 0.88;
-    }
-    else if (/ineligible|failed|rejected|didn.?t pass|violations?|what.*wrong|which.*fail/.test(lower)) {
-      action = 'show-ineligible';
-      confidence = 0.88;
-    }
-    else if (/filter|find.*loan|search|show.*loan|loans?\s*with|loans?\s*where|which\s*loans?/.test(lower)) {
-      action = 'filter';
-      confidence = 0.85;
-      if (filterCriteria) parameters['criteria'] = filterCriteria;
-    }
-    else if (/summary|overview|metrics|statistics|how\s*many|total|count/.test(lower)) {
-      action = 'summary';
-      confidence = 0.85;
-    }
-    else if (/help|command|how\s*to|what\s*can|usage|guide/.test(lower)) {
-      action = 'help';
-      confidence = 0.85;
-    }
-    else if (/sample|demo|test\s*data|example|load\s*data/.test(lower)) {
-      action = 'load-sample';
-      confidence = 0.85;
-    }
-    else if (/^(hi|hello|hey|good\s*(morning|afternoon|evening))/.test(lower)) {
-      action = 'help';
-      confidence = 0.70;
-    }
-    else {
-      confidence = 0.50;
-    }
-
-    const responseGenerator = DEMO_RESPONSES[action];
-    const message = responseGenerator ? responseGenerator(context, parameters) : '';
-
-    return {
-      intent: { 
-        action, 
-        confidence,
-        parameters: Object.keys(parameters).length > 0 ? parameters : undefined,
-      },
-      message,
-      reasoning: `Demo mode: Classified as "${action}" with ${(confidence * 100).toFixed(0)}% confidence`,
-      provider: 'demo',
-    };
-  }
-
-  private extractFilterCriteria(input: string): string | null {
-    const patterns = [
-      /rate\s*(>|<|>=|<=|=|over|under|above|below|between)\s*(\d+\.?\d*)/i,
-      /upb\s*(>|<|>=|<=|=|over|under|above|below)\s*\$?(\d+[\d,]*)/i,
-      /property\s*type\s*(=|is|:)?\s*(sf|co|cp|pu|mh|2-4)/i,
-      /age\s*(>|<|>=|<=|=|over|under|above|below)\s*(\d+)/i,
-      /status\s*(=|is|:)?\s*([ac])/i,
-      /(single\s*family|condo|manufactured|pud)/i,
-    ];
-    
-    const matches: string[] = [];
-    for (const pattern of patterns) {
-      const match = input.match(pattern);
-      if (match) {
-        matches.push(match[0]);
-      }
-    }
-    
-    return matches.length > 0 ? matches.join(', ') : null;
   }
 }
 

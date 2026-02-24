@@ -3,6 +3,7 @@
  * 
  * Simple Express.js backend for managing eligibility rules.
  * Uses file-based JSON storage for easy demo setup.
+ * Includes audit logging and rule provenance tracking.
  */
 
 const express = require('express');
@@ -14,6 +15,7 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DATA_FILE = path.join(__dirname, 'data', 'rules.json');
+const AUDIT_LOG_FILE = path.join(__dirname, 'data', 'audit-logs.json');
 
 // ── Middleware ────────────────────────────────────────────────────
 
@@ -46,6 +48,43 @@ function writeRulesData(data) {
     return true;
   } catch (error) {
     console.error('Error writing rules file:', error);
+    return false;
+  }
+}
+
+// ── Audit Log Functions ───────────────────────────────────────────
+
+function readAuditLogs() {
+  try {
+    if (!fs.existsSync(AUDIT_LOG_FILE)) {
+      return { logs: [], metadata: { totalEntries: 0, lastUpdated: new Date().toISOString() } };
+    }
+    const data = fs.readFileSync(AUDIT_LOG_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Error reading audit logs:', error);
+    return { logs: [], metadata: { totalEntries: 0, lastUpdated: new Date().toISOString() } };
+  }
+}
+
+function writeAuditLog(logEntry) {
+  try {
+    const data = readAuditLogs();
+    data.logs.push({
+      id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      ...logEntry
+    });
+    // Keep only last 10000 entries
+    if (data.logs.length > 10000) {
+      data.logs = data.logs.slice(-10000);
+    }
+    data.metadata.totalEntries = data.logs.length;
+    data.metadata.lastUpdated = new Date().toISOString();
+    fs.writeFileSync(AUDIT_LOG_FILE, JSON.stringify(data, null, 2), 'utf8');
+    return true;
+  } catch (error) {
+    console.error('Error writing audit log:', error);
     return false;
   }
 }
@@ -125,7 +164,18 @@ app.post('/api/rules', (req, res) => {
     remediation: req.body.remediation || '',
     enabled: req.body.enabled !== false,
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    // Provenance tracking
+    provenance: {
+      author: req.body.provenance?.author || req.headers['x-user-id'] || 'system',
+      authorEmail: req.body.provenance?.authorEmail || req.headers['x-user-email'] || '',
+      version: '1.0.0',
+      effectiveDate: req.body.provenance?.effectiveDate || new Date().toISOString(),
+      expirationDate: req.body.provenance?.expirationDate || null,
+      approvedBy: req.body.provenance?.approvedBy || null,
+      approvalDate: req.body.provenance?.approvalDate || null,
+      changeReason: req.body.provenance?.changeReason || 'Initial creation'
+    }
   };
   
   // Check for duplicate ID
@@ -173,13 +223,41 @@ app.put('/api/rules/:id', (req, res) => {
   }
   
   const existingRule = data.rules[index];
+  
+  // Increment version
+  const currentVersion = existingRule.provenance?.version || '1.0.0';
+  const versionParts = currentVersion.split('.').map(Number);
+  versionParts[2] = (versionParts[2] || 0) + 1; // Increment patch version
+  const newVersion = versionParts.join('.');
+  
   const updatedRule = {
     ...existingRule,
     ...req.body,
     id: existingRule.id, // ID cannot be changed
     createdAt: existingRule.createdAt, // Preserve creation date
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    provenance: {
+      ...existingRule.provenance,
+      ...req.body.provenance,
+      author: req.body.provenance?.author || req.headers['x-user-id'] || existingRule.provenance?.author || 'system',
+      version: newVersion,
+      changeReason: req.body.provenance?.changeReason || 'Rule updated'
+    }
   };
+  
+  // Log the change
+  writeAuditLog({
+    action: 'rule.updated',
+    ruleId: existingRule.id,
+    ruleName: existingRule.name,
+    userId: req.headers['x-user-id'] || 'system',
+    previousVersion: currentVersion,
+    newVersion: newVersion,
+    changes: {
+      before: existingRule,
+      after: updatedRule
+    }
+  });
   
   data.rules[index] = updatedRule;
   
@@ -319,6 +397,102 @@ app.post('/api/rules/import', (req, res) => {
   }
 });
 
+// ── Audit Logs API ────────────────────────────────────────────────
+
+// POST /api/agent/logs - Create audit log entry
+app.post('/api/agent/logs', (req, res) => {
+  const logEntry = {
+    requestId: req.body.requestId || uuidv4(),
+    userId: req.body.userId || req.headers['x-user-id'] || 'anonymous',
+    sessionId: req.body.sessionId || req.headers['x-session-id'],
+    action: req.body.action,
+    ruleVersion: req.body.ruleVersion,
+    modelVersion: req.body.modelVersion,
+    payload: req.body.payload,
+    result: req.body.result,
+    metrics: req.body.metrics,
+    source: req.body.source || 'pool-advisor-ui'
+  };
+  
+  if (!logEntry.action) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required field: action'
+    });
+  }
+  
+  if (writeAuditLog(logEntry)) {
+    res.status(201).json({
+      success: true,
+      data: { requestId: logEntry.requestId },
+      message: 'Audit log created'
+    });
+  } else {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to write audit log'
+    });
+  }
+});
+
+// GET /api/agent/logs - Query audit logs
+app.get('/api/agent/logs', (req, res) => {
+  const data = readAuditLogs();
+  const { action, userId, startDate, endDate, limit } = req.query;
+  
+  let logs = data.logs;
+  
+  // Filter by action
+  if (action) {
+    logs = logs.filter(l => l.action === action || l.action?.startsWith(action));
+  }
+  
+  // Filter by userId
+  if (userId) {
+    logs = logs.filter(l => l.userId === userId);
+  }
+  
+  // Filter by date range
+  if (startDate) {
+    logs = logs.filter(l => new Date(l.timestamp) >= new Date(startDate));
+  }
+  if (endDate) {
+    logs = logs.filter(l => new Date(l.timestamp) <= new Date(endDate));
+  }
+  
+  // Apply limit (default 100, max 1000)
+  const maxLimit = Math.min(parseInt(limit) || 100, 1000);
+  logs = logs.slice(-maxLimit).reverse();
+  
+  res.json({
+    success: true,
+    data: logs,
+    metadata: {
+      total: data.logs.length,
+      returned: logs.length,
+      lastUpdated: data.metadata.lastUpdated
+    }
+  });
+});
+
+// GET /api/agent/logs/:requestId - Get specific log entry
+app.get('/api/agent/logs/:requestId', (req, res) => {
+  const data = readAuditLogs();
+  const log = data.logs.find(l => l.requestId === req.params.requestId || l.id === req.params.requestId);
+  
+  if (!log) {
+    return res.status(404).json({
+      success: false,
+      error: `Log entry ${req.params.requestId} not found`
+    });
+  }
+  
+  res.json({
+    success: true,
+    data: log
+  });
+});
+
 // ── Error Handling ────────────────────────────────────────────────
 
 app.use((err, req, res, next) => {
@@ -338,7 +512,7 @@ app.listen(PORT, () => {
   console.log('╠══════════════════════════════════════════════════════════╣');
   console.log(`║  🚀 Server running on http://localhost:${PORT}              ║`);
   console.log('║                                                          ║');
-  console.log('║  Endpoints:                                              ║');
+  console.log('║  Rules API:                                              ║');
   console.log('║    GET    /api/rules         - List all rules            ║');
   console.log('║    GET    /api/rules/:id     - Get single rule           ║');
   console.log('║    POST   /api/rules         - Create new rule           ║');
@@ -348,6 +522,11 @@ app.listen(PORT, () => {
   console.log('║    GET    /api/categories    - List categories           ║');
   console.log('║    GET    /api/rules/export  - Export rules              ║');
   console.log('║    POST   /api/rules/import  - Import rules              ║');
+  console.log('║                                                          ║');
+  console.log('║  Audit Logs API:                                         ║');
+  console.log('║    POST   /api/agent/logs    - Create audit log          ║');
+  console.log('║    GET    /api/agent/logs    - Query audit logs          ║');
+  console.log('║    GET    /api/agent/logs/:id - Get specific log         ║');
   console.log('╚══════════════════════════════════════════════════════════╝');
   console.log('');
 });

@@ -18,7 +18,15 @@
       "remediation": "Verify the interest rate is correctly entered. If the rate is outside normal bounds, check if this loan qualifies for a special program.",
       "enabled": true,
       "createdAt": "2025-01-01T00:00:00Z",
-      "updatedAt": "2026-02-22T04:15:19.224Z"
+      "updatedAt": "2026-02-22T04:15:19.224Z",
+      "provenance": {
+        "author": "system",
+        "version": "1.0.0",
+        "effectiveDate": "2025-01-01T00:00:00Z",
+        "approvedBy": "Compliance Team",
+        "approvalDate": "2024-12-15T00:00:00Z",
+        "changeReason": "Initial rule definition based on MortgageMax Guide Section 4301.1"
+      }
     },
     {
       "id": "RATE-002",
@@ -35,7 +43,7 @@
       "remediation": "Correct the coupon rate to be at or below the note rate. Check for data entry errors or incorrect pool assignment.",
       "enabled": true,
       "createdAt": "2025-01-01T00:00:00Z",
-      "updatedAt": "2025-01-01T00:00:00Z"
+      "updatedAt": "2026-02-23T17:44:56.504Z"
     },
     {
       "id": "RATE-003",
@@ -148,24 +156,24 @@
       "remediation": "Remove non-performing loans from the pool. If status is incorrect, update to reflect current loan performance.",
       "enabled": true,
       "createdAt": "2025-01-01T00:00:00Z",
-      "updatedAt": "2025-01-01T00:00:00Z"
+      "updatedAt": "2026-02-23T03:19:54.631Z"
     },
     {
       "id": "AGE-001",
       "name": "Minimum Loan Age",
       "category": "age",
-      "description": "Loans must be at least 4 months old (seasoned)",
-      "requirement": "loanAgeMonths ≥ 4",
+      "description": "Loans must be at least 3 months old (seasoned)",
+      "requirement": "loanAgeMonths ≥ 3",
       "field": "loanAgeMonths",
       "operator": "gte",
-      "value": 4,
+      "value": "3",
       "severity": "warning",
       "guideReference": "Section 4601.1",
       "explanation": "Seasoning ensures payment history exists and reduces early payment default risk. Very new loans have insufficient track record.",
-      "remediation": "Hold the loan until it reaches 4 months of age, or document why early delivery is appropriate.",
+      "remediation": "Hold the loan until it reaches 3 months of age, or document why early delivery is appropriate.",
       "enabled": true,
       "createdAt": "2025-01-01T00:00:00Z",
-      "updatedAt": "2025-01-01T00:00:00Z"
+      "updatedAt": "2026-02-24T03:18:05.760Z"
     },
     {
       "id": "POOL-001",
@@ -207,7 +215,7 @@
   ],
   "metadata": {
     "version": "1.0.0",
-    "lastUpdated": "2026-02-22T04:15:19.224Z",
+    "lastUpdated": "2026-02-24T03:18:05.760Z",
     "totalRules": 11
   }
 }

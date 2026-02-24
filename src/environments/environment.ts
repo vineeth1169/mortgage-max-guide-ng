@@ -2,14 +2,14 @@ export const environment = {
   production: false,
 
   // ── AI Provider Configuration ────────────────────────────────────
-  // Supports multiple AI providers: Groq (free), Claude (paid), or Demo (offline)
+  // Supports multiple AI providers: Groq or Claude
   ai: {
-    // Default provider: 'groq' (free), 'claude', or 'demo'
+    // Default provider: 'groq' or 'claude'
     defaultProvider: 'groq' as const,
 
-    // Groq Configuration (FREE - recommended for development)
+    // Groq Configuration (recommended for development - fast inference)
     groq: {
-      apiKey: '', // Get free key at https://console.groq.com and set here
+      apiKey: '', // Set your Groq API key here - get one at https://console.groq.com
       model: 'llama-3.3-70b-versatile',
       maxTokens: 1024,
     },
