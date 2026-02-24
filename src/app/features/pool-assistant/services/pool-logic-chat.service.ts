@@ -360,19 +360,14 @@ export class PoolLogicChatService {
         return;
       }
 
-      // If AI provided a direct data query answer, use it
-      if (response.intent.action === 'data-query' && response.message) {
+      // For intents where AI provides the complete response, use AI's message directly
+      const aiMessageIntents = ['data-query', 'general', 'help', 'explain-rule'];
+      if (aiMessageIntents.includes(response.intent.action) && response.message) {
         this.appendAssistantMessage(response.message);
         return;
       }
 
-      // If AI provided a custom message for general queries, use it
-      if (response.intent.action === 'general' && response.message) {
-        this.appendAssistantMessage(response.message);
-        return;
-      }
-
-      // Otherwise, dispatch to the appropriate handler
+      // For action intents that require data operations, dispatch to handlers
       await this.dispatchIntent(response.intent.action, input, response.intent.parameters);
     } catch (err: any) {
       this.updateAgentStatus('idle', 0, '');
@@ -457,14 +452,15 @@ export class PoolLogicChatService {
         }
         break;
       case 'data-query':
-        // AI already analyzed the data and provided response
-        // This is handled in processWithClaude before dispatch
-        this.handleGeneralQuestion(originalInput);
+        // AI already analyzed the data and provided response in processWithClaude
+        // This case should not be reached as data-query is handled before dispatch
         break;
       case 'show-rules':
         this.handleShowRules();
         break;
       case 'explain-rule':
+        // AI should have provided the explanation in message
+        // Fallback: fetch from validation service if no AI message
         if (parameters?.['ruleId']) {
           const explanation = this.validationService.explainRule(parameters['ruleId']);
           this.appendAssistantMessage(explanation);
@@ -473,8 +469,6 @@ export class PoolLogicChatService {
           if (ruleId) {
             const explanation = this.validationService.explainRule(ruleId);
             this.appendAssistantMessage(explanation);
-          } else {
-            this.appendAssistantMessage('Please specify a rule ID (e.g., "explain rule RATE-001").');
           }
         }
         break;
@@ -489,13 +483,14 @@ export class PoolLogicChatService {
         this.exportIneligibleLoans(format as ExportFormat);
         break;
       case 'help':
-        this.handleHelp();
+        // AI should have provided help in message; this is a fallback
         break;
       case 'load-sample':
         this.loadSampleData();
         break;
       default:
-        this.handleGeneralQuestion(originalInput);
+        // All responses should come from AI - no hardcoded fallback
+        break;
     }
   }
 
@@ -995,132 +990,6 @@ export class PoolLogicChatService {
     };
 
     this.appendAssistantMessage(`✅ Downloading ${ineligible.length} ineligible loan(s) as ${formatLabels[format]}...`);
-  }
-
-  private handleHelp(): void {
-    this.appendAssistantMessage(
-      `## Loan Pool Advisor — Commands\n\n` +
-      `| Command | Description |\n|---|---|\n` +
-      `| **Upload a file** | Drag & drop or click to upload CSV/JSON loan files |\n` +
-      `| **"load sample"** | Load demonstration loan data |\n` +
-      `| **"validate"** | Run eligibility checks on loaded loans |\n` +
-      `| **"build pool"** | Construct a pool with eligible loans only |\n` +
-      `| **"filter"** + criteria | Filter by coupon range, age, status, property type, prefix, UPB range, special category |\n` +
-      `| **"show rules"** | Display all eligibility rules |\n` +
-      `| **"explain rule [ID]"** | Explain a specific rule (e.g., "explain rule RATE-001") |\n` +
-      `| **"show ineligible"** | View detailed failure reasons for ineligible loans |\n` +
-      `| **"summary"** | Display current pool summary metrics |\n` +
-      `| **"show sample"** | Preview loaded loan data |\n` +
-      `| **"help"** | Show this command reference |\n\n` +
-      `### 📥 Export Commands\n\n` +
-      `| Command | Description |\n|---|---|\n` +
-      `| **"download ineligible csv"** | Download ineligible loans as CSV spreadsheet |\n` +
-      `| **"download ineligible excel"** | Download as Excel-compatible file |\n` +
-      `| **"download ineligible pdf"** | Download as printable PDF report with fix suggestions |\n` +
-      `| **"download ineligible json"** | Download as machine-readable JSON |\n\n` +
-      `**Required CSV/JSON fields:** ${[...REQUIRED_LOAN_FIELDS].join(', ')}\n\n` +
-      `You can also ask natural language questions about loans, rules, or MortgageMax guidelines.`
-    );
-  }
-
-  private handleGeneralQuestion(input: string): void {
-    const lower = input.toLowerCase();
-    const loans = this.uploadedLoans();
-    const results = this.validationResults();
-
-    if (lower.includes('how many') && lower.includes('loan')) {
-      if (loans.length > 0) {
-        const eligible = results.filter(r => r.eligible).length;
-        this.appendAssistantMessage(
-          `There are **${loans.length} loans** currently loaded.` +
-          (results.length > 0 ? ` Of these, **${eligible}** are eligible and **${results.length - eligible}** are ineligible.` : ' Run **"validate"** to check their eligibility.')
-        );
-      } else {
-        this.appendAssistantMessage('No loans are currently loaded. Upload a file or type **"load sample"** to get started.');
-      }
-      return;
-    }
-
-    if (lower.includes('interest rate') || lower.includes('coupon rate') || lower.includes('net yield')) {
-      this.appendAssistantMessage(
-        `Per MortgageMax eligibility rules:\n\n` +
-        `- **Interest Rate**: Must be > 0% and ≤ 12% (RATE-001)\n` +
-        `- **Coupon Rate**: Must not exceed the interest rate (RATE-002)\n` +
-        `- **Net Yield**: Must be ≥ 0 and ≤ coupon rate (RATE-003)\n\n` +
-        `Need to check your loans? Type **"validate"** to run a full eligibility analysis.`
-      );
-      return;
-    }
-
-    if (lower.includes('upb') || lower.includes('unpaid principal') || lower.includes('balance')) {
-      this.appendAssistantMessage(
-        `Per MortgageMax balance requirements:\n\n` +
-        `- **UPB**: Must be greater than zero (BAL-001)\n` +
-        `- **Investor Balance**: Must not exceed UPB (BAL-002)\n` +
-        `- **Conforming Limit**: UPB must not exceed $766,550 (BAL-003)\n\n` +
-        `Type **"validate"** to check all loans against these rules.`
-      );
-      return;
-    }
-
-    if (lower.includes('property type')) {
-      this.appendAssistantMessage(
-        `Eligible property type codes per MortgageMax:\n\n` +
-        `- **SF** — Single-Family\n` +
-        `- **CO** — Condominium\n` +
-        `- **CP** — Co-op\n` +
-        `- **PU** — PUD\n` +
-        `- **MH** — Manufactured Housing\n` +
-        `- **2-4** — 2-4 Unit\n\n` +
-        `Loans with other property type codes will be flagged as ineligible.`
-      );
-      return;
-    }
-
-    if (lower.includes('status') || lower.includes('loan status')) {
-      this.appendAssistantMessage(
-        `Per MortgageMax guidelines, loans must have an active status to be pool-eligible:\n\n` +
-        `- **A** — Active\n` +
-        `- **C** — Current\n\n` +
-        `Loans with status codes such as D (Delinquent), F (Foreclosure), etc. will fail the STATUS-001 rule.`
-      );
-      return;
-    }
-
-    if (lower.includes('conforming') || lower.includes('loan limit')) {
-      this.appendAssistantMessage(
-        `The **2025 conforming loan limit** is **$766,550** for single-unit properties. ` +
-        `Loans with UPB exceeding this limit are not eligible for standard MortgageMax purchase. ` +
-        `Higher limits apply in designated high-cost areas.`
-      );
-      return;
-    }
-
-    if (lower.includes('required field') || lower.includes('what fields') || lower.includes('columns')) {
-      this.appendAssistantMessage(
-        `## Required Loan Fields\n\n` +
-        `Your CSV or JSON file must contain these fields (case-insensitive, underscores/hyphens ignored):\n\n` +
-        `| Field | Description |\n|---|---|\n` +
-        `| loanNumber | Unique loan identifier |\n` +
-        `| interestRate | Note interest rate (%) |\n` +
-        `| currentInvestorBalance | Current investor balance ($) |\n` +
-        `| propertyType | Property type code (SF, CO, etc.) |\n` +
-        `| upb | Unpaid principal balance ($) |\n\n` +
-        `**Optional but recommended:** poolNumber, mbsPoolPrefix, couponRate, netYield, loanAgeMonths, loanStatusCode, rateTypeCode, specialCategory`
-      );
-      return;
-    }
-
-    // Fallback
-    this.appendAssistantMessage(
-      `I understand you're asking about: "${input}"\n\n` +
-      `As your Loan Pool Advisor, I can help with:\n` +
-      `- **Loan validation** against MortgageMax eligibility rules\n` +
-      `- **Pool construction** with eligible loans\n` +
-      `- **Rule explanations** for any eligibility requirement\n` +
-      `- **Data filtering** by rate, UPB, property type, and more\n\n` +
-      `Upload a loan file or type **"help"** to see available commands.`
-    );
   }
 
   // ── API → Internal Mappers ─────────────────────────────────────────
