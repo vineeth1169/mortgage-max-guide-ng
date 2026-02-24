@@ -19,6 +19,7 @@ import { EligibilityApiService } from './eligibility-api.service';
 import { PoolingApiService } from './pooling-api.service';
 import { ClaudeAIService, AIProvider, PROVIDER_INFO, LoanDataContext, LoanSample, LoanStats } from './claude-ai.service';
 import { ExportService, ExportFormat } from './export.service';
+import { BackendChatService } from './backend-chat.service';
 
 @Injectable({ providedIn: 'root' })
 export class PoolLogicChatService {
@@ -27,6 +28,10 @@ export class PoolLogicChatService {
   private readonly poolingApi = inject(PoolingApiService);
   private readonly claudeService = inject(ClaudeAIService);
   private readonly exportService = inject(ExportService);
+  private readonly backendChat = inject(BackendChatService);
+
+  // Backend session ID for conversation continuity
+  private backendSessionId: string | null = null;
 
   // ── AI Mode ───────────────────────────────────────────────────────
   readonly aiModeEnabled = computed(() => this.claudeService.isEnabled());
@@ -263,6 +268,13 @@ export class PoolLogicChatService {
     this.setValidationResults([]);
     this.setPoolSummary(null);
     this.updateAgentStatus('idle', 0, '');
+    
+    // Clear backend session for fresh conversation
+    if (this.backendSessionId) {
+      this.backendChat.clearSession(this.backendSessionId).catch(() => {});
+      this.backendSessionId = null;
+    }
+    
     this.addSystemWelcome();
   }
 
@@ -343,22 +355,23 @@ export class PoolLogicChatService {
 
   private async processWithClaude(input: string): Promise<void> {
     const providerInfo = this.claudeService.providerInfo();
-    this.updateAgentStatus('validating', 10, `Analyzing with ${providerInfo.name}...`);
+    this.updateAgentStatus('validating', 10, `Processing with AI...`);
 
     // Build comprehensive context with loan data for AI
     const context = this.buildAIContext();
 
     try {
-      const response = await this.claudeService.classifyIntent(input, context);
+      // Send message to backend AI service (all AI interactions go through backend)
+      const response = await this.backendChat.sendMessage({
+        message: input,
+        sessionId: this.backendSessionId || undefined,
+        context: context,
+      });
+
+      // Store session ID for conversation continuity
+      this.backendSessionId = response.sessionId;
 
       this.updateAgentStatus('idle', 0, '');
-
-      // Check for errors from the AI service
-      const error = this.claudeService.lastError();
-      if (error) {
-        this.appendAssistantMessage(`⚠️ **API Error**: ${error}\n\nPlease check your API key configuration.`);
-        return;
-      }
 
       // For intents where AI provides the complete response, use AI's message directly
       const aiMessageIntents = ['data-query', 'general', 'help', 'explain-rule'];
@@ -456,21 +469,11 @@ export class PoolLogicChatService {
         // This case should not be reached as data-query is handled before dispatch
         break;
       case 'show-rules':
-        this.handleShowRules();
+        await this.handleShowRules();
         break;
       case 'explain-rule':
-        // AI should have provided the explanation in message
-        // Fallback: fetch from validation service if no AI message
-        if (parameters?.['ruleId']) {
-          const explanation = this.validationService.explainRule(parameters['ruleId']);
-          this.appendAssistantMessage(explanation);
-        } else {
-          const ruleId = originalInput.match(/[A-Z]+-\d+/)?.[0];
-          if (ruleId) {
-            const explanation = this.validationService.explainRule(ruleId);
-            this.appendAssistantMessage(explanation);
-          }
-        }
+        // AI should have already provided the explanation in its message
+        // No local fallback - all rule explanations come from backend AI
         break;
       case 'summary':
         this.handleShowSummary();
@@ -502,43 +505,165 @@ export class PoolLogicChatService {
       return;
     }
 
-    this.updateAgentStatus('filtering', 50, 'Applying AI-generated filters...');
-    await this.delay(300);
+    this.updateAgentStatus('filtering', 50, 'Filtering via backend...');
 
-    const filtered = this.validationService.filterLoans(loans, filter);
-    const appliedFilters = this.describeAppliedFilters(filter);
+    try {
+      // Use backend filtering (all logic on server)
+      const filterResult = await this.backendChat.filterLoans(loans, filter);
+      
+      this.updateAgentStatus('idle', 0, '');
 
-    let response = `## Filter Results\n\n`;
-    if (appliedFilters.length > 0) {
-      response += `**Active filters:** ${appliedFilters.join(' · ')}\n\n`;
+      const appliedFilters = this.describeAppliedFilters(filter);
+
+      let response = `## Filter Results\n\n`;
+      if (appliedFilters.length > 0) {
+        response += `**Active filters:** ${appliedFilters.join(' · ')}\n\n`;
+      }
+      response += `Applied filters to **${filterResult.originalCount} loans** — **${filterResult.filteredCount}** match your criteria.\n\n`;
+
+      if (filterResult.filteredCount > 0 && filterResult.filteredCount <= 10) {
+        response += `| Loan # | Pool | Prefix | Rate | Coupon | UPB | Age | Status | Property |\n`;
+        response += `|---|---|---|---|---|---|---|---|---|\n`;
+        filterResult.loans.forEach(l => {
+          response += `| ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.mbsPoolPrefix || '-'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode} | ${l.propertyType} |\n`;
+        });
+      } else if (filterResult.filteredCount > 10) {
+        response += `Showing first 10 of ${filterResult.filteredCount} matches:\n\n`;
+        response += `| Loan # | Pool | Rate | Coupon | UPB | Age | Status | Property |\n`;
+        response += `|---|---|---|---|---|---|---|---|\n`;
+        filterResult.loans.slice(0, 10).forEach(l => {
+          response += `| ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode} | ${l.propertyType} |\n`;
+        });
+      } else {
+        response += `No loans match the specified criteria. Try broadening your filters.`;
+      }
+
+      this.appendAssistantMessage(response);
+    } catch (error: any) {
+      this.updateAgentStatus('idle', 0, '');
+      this.appendAssistantMessage(`⚠️ **Filter Error**: ${error.message || 'Failed to filter loans'}`);
     }
-    response += `Applied filters to **${loans.length} loans** — **${filtered.length}** match your criteria.\n\n`;
-
-    if (filtered.length > 0 && filtered.length <= 10) {
-      response += `| Loan # | Pool | Prefix | Rate | Coupon | UPB | Age | Status | Property | Special |\n`;
-      response += `|---|---|---|---|---|---|---|---|---|---|\n`;
-      filtered.forEach(l => {
-        response += `| ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.mbsPoolPrefix || '-'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode} | ${l.propertyType} | ${l.specialCategory || '-'} |\n`;
-      });
-    } else if (filtered.length > 10) {
-      response += `Showing first 10 of ${filtered.length} matches:\n\n`;
-      response += `| Loan # | Pool | Rate | Coupon | UPB | Age | Status | Property |\n`;
-      response += `|---|---|---|---|---|---|---|---|\n`;
-      filtered.slice(0, 10).forEach(l => {
-        response += `| ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode} | ${l.propertyType} |\n`;
-      });
-    } else {
-      response += `No loans match the specified criteria. Try broadening your filters.\n\n`;
-      response += `**Available filter criteria:** coupon range, loan age, status, property type, prefix, UPB range, special category`;
-    }
-
-    this.appendAssistantMessage(response);
-    this.updateAgentStatus('idle', 0, '');
   }
 
   // ── Intent Handlers ───────────────────────────────────────────────
 
   private async handleValidation(): Promise<void> {
+    const loans = this.uploadedLoans();
+    if (loans.length === 0) {
+      this.appendAssistantMessage('No loan data is currently loaded. Please upload a CSV or JSON file, or type **"load sample"** to use demonstration data.');
+      return;
+    }
+
+    this.updateAgentStatus('validating', 10, 'Validating loans via backend...');
+
+    try {
+      // Use backend validation (all rule evaluation on server)
+      const validationResult = await this.backendChat.validateLoans(loans);
+      
+      this.updateAgentStatus('validating', 90, 'Processing results...');
+
+      // Map backend response to local format
+      const results = this.mapBackendToValidationResults(validationResult);
+      const summary = this.mapBackendToPoolSummary(validationResult);
+
+      this.setValidationResults(results);
+      this.setPoolSummary(summary);
+
+      // Use AI-generated message if available, otherwise build basic response
+      let response: string;
+      if (validationResult.aiMessage) {
+        response = validationResult.aiMessage;
+      } else {
+        response = `## Validation Complete\n\n`;
+        response += `Analyzed **${validationResult.summary.totalLoans} loans** against eligibility rules.\n\n`;
+        response += `| Metric | Value |\n|---|---|\n`;
+        response += `| Eligible Loans | **${validationResult.summary.eligibleCount}** |\n`;
+        response += `| Ineligible Loans | **${validationResult.summary.ineligibleCount}** |\n`;
+        response += `| Total UPB | **$${validationResult.summary.totalUPB.toLocaleString()}** |\n`;
+        response += `| Eligible UPB | **$${validationResult.summary.eligibleUPB.toLocaleString()}** |\n\n`;
+        response += `Type **"build pool"** to construct a pool with eligible loans.`;
+      }
+
+      const msg = this.createMessage('assistant', response);
+      msg.loanResults = results;
+      msg.poolSummary = summary;
+      this.appendMessage(msg);
+
+      this.updateAgentStatus('complete', 100, 'Validation complete');
+      setTimeout(() => this.updateAgentStatus('idle', 0, ''), 2000);
+    } catch (error: any) {
+      this.updateAgentStatus('error', 0, 'Validation failed');
+      this.appendAssistantMessage(`⚠️ **Validation Error**: ${error.message || 'Failed to validate loans'}`);
+    }
+  }
+
+  /**
+   * Map backend validation response to local LoanValidationResult[]
+   */
+  private mapBackendToValidationResults(response: import('./backend-chat.service').ValidationResponse): LoanValidationResult[] {
+    const results: LoanValidationResult[] = [];
+
+    // Add eligible loans
+    response.eligibleLoans.forEach(loan => {
+      results.push({
+        loanNumber: loan.loanNumber,
+        poolNumber: loan.poolNumber,
+        eligible: true,
+        violations: [],
+        score: 100,
+      });
+    });
+
+    // Add ineligible loans
+    response.ineligibleLoans.forEach(il => {
+      results.push({
+        loanNumber: il.loanNumber,
+        poolNumber: il.poolNumber,
+        eligible: false,
+        violations: il.failedRules.map(fr => ({
+          rule: {
+            ruleId: fr.ruleId,
+            ruleName: fr.ruleName,
+            category: fr.category as any,
+            description: fr.explanation,
+            guideReference: fr.guideReference,
+          },
+          actualValue: fr.actualValue,
+          expectedValue: fr.expectedValue,
+          severity: fr.severity,
+          explanation: fr.explanation,
+          recommendedAction: fr.recommendedAction,
+        })),
+        score: il.score,
+      });
+    });
+
+    return results;
+  }
+
+  /**
+   * Map backend validation response to local PoolSummary
+   */
+  private mapBackendToPoolSummary(response: import('./backend-chat.service').ValidationResponse): PoolSummary {
+    return {
+      totalLoans: response.summary.totalLoans,
+      eligibleLoans: response.summary.eligibleCount,
+      ineligibleLoans: response.summary.ineligibleCount,
+      warningLoans: response.summary.warningCount || 0,
+      totalUPB: response.summary.totalUPB,
+      eligibleUPB: response.summary.eligibleUPB,
+      weightedAvgRate: response.summary.weightedAvgRate,
+      weightedAvgCoupon: response.summary.weightedAvgCoupon,
+      weightedAvgAge: response.summary.weightedAvgAge,
+      topViolations: response.summary.ruleFailures.map(rf => ({
+        ruleName: rf.ruleName,
+        count: rf.count,
+      })),
+    };
+  }
+
+  // Legacy handlers for backward compatibility - these now call the backend
+  private async handleValidationLegacy(): Promise<void> {
     const loans = this.uploadedLoans();
     if (loans.length === 0) {
       this.appendAssistantMessage('No loan data is currently loaded. Please upload a CSV or JSON file, or type **"load sample"** to use demonstration data.');
@@ -606,65 +731,14 @@ export class PoolLogicChatService {
       return;
     }
 
-    // ── Fallback to local validation ────────────────────────────────
-    // NOTE: API fallback warning removed - local engine is the primary mode
-
-    await this.simulateProgress('validating', [
-      { pct: 20, msg: 'Applying interest rate rules...' },
-      { pct: 40, msg: 'Checking balance & UPB requirements...' },
-      { pct: 60, msg: 'Evaluating property and status codes...' },
-      { pct: 80, msg: 'Validating pool assignments...' },
-      { pct: 95, msg: 'Compiling results...' },
-    ]);
-
-    const results = this.validationService.validateLoans(loans);
-    const summary = this.validationService.buildPoolSummary(results, loans);
-
-    this.setValidationResults(results);
-    this.setPoolSummary(summary);
-
-    const eligible = results.filter(r => r.eligible);
-    const ineligible = results.filter(r => !r.eligible);
-
-    let response = `## Validation Complete  *(local)*\n\n`;
-    response += `Analyzed **${loans.length} loans** against ${this.validationService.getRules().length} MortgageMax eligibility rules.\n\n`;
-    response += `| Metric | Value |\n|---|---|\n`;
-    response += `| Eligible Loans | **${eligible.length}** (${Math.round(eligible.length / loans.length * 100)}%) |\n`;
-    response += `| Ineligible Loans | **${ineligible.length}** (${Math.round(ineligible.length / loans.length * 100)}%) |\n`;
-    response += `| Total UPB | **$${summary.totalUPB.toLocaleString()}** |\n`;
-    response += `| Eligible UPB | **$${summary.eligibleUPB.toLocaleString()}** |\n`;
-    response += `| WA Interest Rate | **${summary.weightedAvgRate}%** |\n`;
-    response += `| WA Coupon Rate | **${summary.weightedAvgCoupon}%** |\n`;
-    response += `| WA Loan Age | **${summary.weightedAvgAge} months** |\n\n`;
-
-    if (ineligible.length > 0) {
-      response += `### Ineligible Loans\n\n`;
-      response += `| Loan # | Pool | Failures | Failed Rules |\n|---|---|---|---|\n`;
-      ineligible.forEach(r => {
-        const errors = r.violations.filter(v => v.severity === 'error');
-        response += `| ${r.loanNumber} | ${r.poolNumber || 'N/A'} | ${errors.length} | ${errors.map(e => e.rule.ruleName).join(', ') || 'Warnings only'} |\n`;
-      });
-      response += `\n> Remove or correct the ${ineligible.length} ineligible loan(s) before pool construction.\n\n`;
-    }
-
-    if (summary.topViolations.length > 0) {
-      response += `### Top Rule Violations\n\n`;
-      response += `| Rule | Occurrences |\n|---|---|\n`;
-      summary.topViolations.forEach(v => {
-        response += `| ${v.ruleName} | ${v.count} |\n`;
-      });
-      response += `\n`;
-    }
-
-    response += `Type **"build pool"** to construct a pool with eligible loans only, or **"show ineligible"** for detailed failure reasons.`;
-
-    const msg = this.createMessage('assistant', response);
-    msg.loanResults = results;
-    msg.poolSummary = summary;
-    this.appendMessage(msg);
-
-    this.updateAgentStatus('complete', 100, 'Validation complete');
-    setTimeout(() => this.updateAgentStatus('idle', 0, ''), 2000);
+    // API failed - no local fallback allowed
+    console.error('Validation API unavailable');
+    this.appendMessage(this.createMessage('assistant',
+      `⚠️ **Validation Service Unavailable**\n\n` +
+      `Unable to connect to the validation service. Please ensure the backend server is running and try again.\n\n` +
+      `Contact your administrator if the problem persists.`
+    ));
+    this.updateAgentStatus('error', 0, 'Service unavailable');
   }
 
   private async handleBuildPool(): Promise<void> {
@@ -674,11 +748,72 @@ export class PoolLogicChatService {
       return;
     }
 
+    this.updateAgentStatus('building-pool', 10, 'Building pool via backend...');
+
+    try {
+      // Use backend pool building (all logic on server)
+      const poolResult = await this.backendChat.buildPool(loans);
+      
+      this.updateAgentStatus('building-pool', 90, 'Processing results...');
+
+      // Map to local pool summary
+      const summary: PoolSummary = {
+        totalLoans: loans.length,
+        eligibleLoans: poolResult.eligibleCount,
+        ineligibleLoans: poolResult.invalidLoans.length,
+        warningLoans: 0,
+        totalUPB: loans.reduce((sum, l) => sum + (l.upb || 0), 0),
+        eligibleUPB: poolResult.notionalAmount,
+        weightedAvgRate: poolResult.poolCoupon, // Approximate
+        weightedAvgCoupon: poolResult.poolCoupon,
+        weightedAvgAge: 0, // Not returned by backend in this endpoint
+        topViolations: [],
+      };
+      this.setPoolSummary(summary);
+
+      // Use AI-generated message if available
+      let response: string;
+      if (poolResult.aiMessage) {
+        response = poolResult.aiMessage;
+      } else {
+        response = `## Pool Construction ${poolResult.status === 'CREATED' ? 'Complete' : poolResult.status}\n\n`;
+        response += `| Pool Metric | Value |\n|---|---|\n`;
+        response += `| Pool Type | **${poolResult.poolType}** |\n`;
+        response += `| Notional Amount | **$${poolResult.notionalAmount.toLocaleString()}** |\n`;
+        response += `| Status | **${poolResult.status}** |\n`;
+        response += `| Pool Coupon | **${poolResult.poolCoupon}%** |\n`;
+        response += `| Request ID | \`${poolResult.requestId}\` |\n\n`;
+
+        if (poolResult.invalidLoans.length > 0) {
+          response += `**${poolResult.invalidLoans.length} loan(s)** were excluded. Type **"show ineligible"** to review.\n`;
+        }
+      }
+
+      const msg = this.createMessage('assistant', response);
+      msg.poolSummary = summary;
+      this.appendMessage(msg);
+
+      this.updateAgentStatus('complete', 100, 'Pool built');
+      setTimeout(() => this.updateAgentStatus('idle', 0, ''), 2000);
+    } catch (error: any) {
+      this.updateAgentStatus('error', 0, 'Pool building failed');
+      this.appendAssistantMessage(`⚠️ **Pool Build Error**: ${error.message || 'Failed to build pool'}`);
+    }
+  }
+
+  // Legacy handleBuildPool for backward compatibility
+  private async handleBuildPoolLegacy(): Promise<void> {
+    const loans = this.uploadedLoans();
+    if (loans.length === 0) {
+      this.appendAssistantMessage('No loan data is currently loaded. Please upload data first.');
+      return;
+    }
+
     let results = this.validationResults();
     if (results.length === 0) {
-      this.appendAssistantMessage('Running validation before pool construction...');
-      results = this.validationService.validateLoans(loans);
-      this.setValidationResults(results);
+      this.appendAssistantMessage('Please run **validate** first before building a pool.');
+      this.updateAgentStatus('idle', 0, '');
+      return;
     }
 
     this.updateAgentStatus('building-pool', 0, 'Calling pooling API...');
@@ -734,42 +869,14 @@ export class PoolLogicChatService {
       return;
     }
 
-    // ── Fallback to local pool construction ──────────────────────────
-    // NOTE: API fallback warning removed - local engine is the primary mode
-
-    await this.simulateProgress('building-pool', [
-      { pct: 30, msg: 'Filtering eligible loans...' },
-      { pct: 60, msg: 'Computing pool metrics...' },
-      { pct: 90, msg: 'Finalizing pool composition...' },
-    ]);
-
-    const summary = this.validationService.buildPoolSummary(results, loans);
-    this.setPoolSummary(summary);
-
-    let response = `## Pool Construction Complete  *(local)*\n\n`;
-    response += `A pool of **${eligible.length} eligible loans** has been constructed.\n\n`;
-    response += `| Pool Metric | Value |\n|---|---|\n`;
-    response += `| Pool Size | **${eligible.length} loans** |\n`;
-    response += `| Total UPB | **$${summary.eligibleUPB.toLocaleString()}** |\n`;
-    response += `| WA Interest Rate | **${summary.weightedAvgRate}%** |\n`;
-    response += `| WA Coupon Rate | **${summary.weightedAvgCoupon}%** |\n`;
-    response += `| WA Loan Age | **${summary.weightedAvgAge} months** |\n`;
-    response += `| Excluded Loans | **${summary.ineligibleLoans}** |\n\n`;
-
-    if (summary.ineligibleLoans > 0) {
-      response += `> **${summary.ineligibleLoans} loan(s)** were excluded due to eligibility rule violations. `;
-      response += `Type **"show ineligible"** to review these loans.\n\n`;
-    }
-
-    response += `The pool meets MortgageMax guidelines and is ready for delivery considerations. `;
-    response += `You may further **filter** loans or ask about specific **rules** that apply to this pool.`;
-
-    const msg = this.createMessage('assistant', response);
-    msg.poolSummary = summary;
-    this.appendMessage(msg);
-
-    this.updateAgentStatus('complete', 100, 'Pool built');
-    setTimeout(() => this.updateAgentStatus('idle', 0, ''), 2000);
+    // API failed - no local fallback allowed
+    console.error('Pooling API unavailable');
+    this.appendMessage(this.createMessage('assistant',
+      `⚠️ **Pool Service Unavailable**\n\n` +
+      `Unable to connect to the pool construction service. Please ensure the backend server is running and try again.\n\n` +
+      `Contact your administrator if the problem persists.`
+    ));
+    this.updateAgentStatus('error', 0, 'Service unavailable');
   }
 
   private async handleFilter(input: string): Promise<void> {
@@ -779,55 +886,33 @@ export class PoolLogicChatService {
       return;
     }
 
+    // Parse filter from input and use backend filtering
     const filter = this.parseFilterFromInput(input);
-    this.updateAgentStatus('filtering', 50, 'Applying filters...');
-
-    await this.delay(500);
-
-    const filtered = this.validationService.filterLoans(loans, filter);
-
-    // Build a readable list of active filters
-    const appliedFilters = this.describeAppliedFilters(filter);
-
-    let response = `## Filter Results\n\n`;
-    if (appliedFilters.length > 0) {
-      response += `**Active filters:** ${appliedFilters.join(' · ')}\n\n`;
-    }
-    response += `Applied filters to **${loans.length} loans** — **${filtered.length}** match your criteria.\n\n`;
-
-    if (filtered.length > 0 && filtered.length <= 10) {
-      response += `| Loan # | Pool | Prefix | Rate | Coupon | UPB | Age | Status | Property | Special |\n`;
-      response += `|---|---|---|---|---|---|---|---|---|---|\n`;
-      filtered.forEach(l => {
-        response += `| ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.mbsPoolPrefix || '-'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode} | ${l.propertyType} | ${l.specialCategory || '-'} |\n`;
-      });
-    } else if (filtered.length > 10) {
-      response += `Showing first 10 of ${filtered.length} matches:\n\n`;
-      response += `| Loan # | Pool | Rate | Coupon | UPB | Age | Status | Property |\n`;
-      response += `|---|---|---|---|---|---|---|---|\n`;
-      filtered.slice(0, 10).forEach(l => {
-        response += `| ${l.loanNumber} | ${l.poolNumber || 'N/A'} | ${l.interestRate}% | ${l.couponRate}% | $${l.upb.toLocaleString()} | ${l.loanAgeMonths}mo | ${l.loanStatusCode} | ${l.propertyType} |\n`;
-      });
-    } else {
-      response += `No loans match the specified criteria. Try broadening your filters.\n\n`;
-      response += `**Available filter criteria:** coupon range, loan age, status, property type, prefix, UPB range, special category`;
-    }
-
-    this.appendAssistantMessage(response);
-    this.updateAgentStatus('idle', 0, '');
+    await this.handleFilterWithParams(filter);
   }
 
-  private handleShowRules(): void {
-    const rules = this.validationService.getRules();
-    let response = `## MortgageMax Eligibility Rules\n\n`;
-    response += `The following **${rules.length} rules** are evaluated during loan validation:\n\n`;
-    response += `| Rule ID | Name | Category | Guide Ref |\n`;
-    response += `|---|---|---|---|\n`;
-    rules.forEach(r => {
-      response += `| ${r.ruleId} | ${r.ruleName} | ${r.category} | ${r.guideReference} |\n`;
-    });
-    response += `\nType **"explain rule [RULE-ID]"** for a detailed explanation of any rule (e.g., "explain rule RATE-001").`;
-    this.appendAssistantMessage(response);
+  private async handleShowRules(): Promise<void> {
+    this.updateAgentStatus('validating', 10, 'Loading rules...');
+    
+    try {
+      // Get rule summary from backend (no thresholds exposed)
+      const ruleSummary = await this.backendChat.getRuleSummary();
+      
+      this.updateAgentStatus('idle', 0, '');
+      
+      let response = `## MortgageMax Eligibility Rules\n\n`;
+      response += `The following **${ruleSummary.totalRules} rules** are evaluated during loan validation:\n\n`;
+      response += `| Rule ID | Name | Category | Guide Ref |\n`;
+      response += `|---|---|---|---|\n`;
+      ruleSummary.rules.forEach(r => {
+        response += `| ${r.id} | ${r.name} | ${r.category} | ${r.guideReference} |\n`;
+      });
+      response += `\nType **"explain rule [RULE-ID]"** for a detailed explanation of any rule (e.g., "explain rule RATE-001").`;
+      this.appendAssistantMessage(response);
+    } catch (error: any) {
+      this.updateAgentStatus('idle', 0, '');
+      this.appendAssistantMessage(`⚠️ **Error**: ${error.message || 'Failed to load rules'}`);
+    }
   }
 
   private handleShowSummary(): void {
@@ -1103,17 +1188,32 @@ export class PoolLogicChatService {
   // ── Utilities ─────────────────────────────────────────────────────
 
   private addSystemWelcome(): void {
-    this.appendMessage(this.createMessage('assistant',
-      `## Welcome to Loan Pool Advisor\n\n` +
-      `I am your intelligent assistant for mortgage loan validation and pool construction. ` +
-      `I evaluate loans against MortgageMax Single-Family Seller/Servicer Guide requirements and help you build compliant loan pools.\n\n` +
-      `**Getting started:**\n` +
-      `1. **Upload a loan file** (CSV or JSON) using the upload area below\n` +
-      `2. Or type **"load sample"** to use demonstration data\n` +
-      `3. Then type **"validate"** to run eligibility checks\n\n` +
-      `**Required fields:** ${[...REQUIRED_LOAN_FIELDS].join(', ')}\n\n` +
-      `I never modify your loan data — only analyze and report. Type **"help"** for all available commands.`
-    ));
+    // Get AI-generated welcome message from backend
+    this.fetchAIWelcomeMessage();
+  }
+
+  /**
+   * Fetch welcome message from backend AI
+   * This ensures the welcome is AI-generated, not hardcoded
+   * No fallback - if backend is unavailable, show error
+   */
+  private async fetchAIWelcomeMessage(): Promise<void> {
+    this.updateAgentStatus('validating', 10, 'Initializing...');
+    
+    try {
+      const response = await this.backendChat.getWelcomeMessage();
+      this.appendMessage(this.createMessage('assistant', response.message));
+      this.updateAgentStatus('idle', 0, '');
+    } catch (error: any) {
+      // No fallback - backend is required for all AI responses
+      console.error('Backend service unavailable:', error.message);
+      this.appendMessage(this.createMessage('assistant',
+        `⚠️ **Service Unavailable**\n\n` +
+        `Unable to connect to the backend service. Please ensure the server is running and try again.\n\n` +
+        `Contact your administrator if the problem persists.`
+      ));
+      this.updateAgentStatus('error', 0, 'Service unavailable');
+    }
   }
 
   /** Parse export format from user input */

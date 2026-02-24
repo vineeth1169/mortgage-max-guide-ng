@@ -84,42 +84,40 @@ See [docs/Agentic-Architecture-Guide.md](docs/Agentic-Architecture-Guide.md) for
 
 ## Architecture
 
+> **Security-First Design:** All business logic, rule evaluation, validation, and AI processing runs exclusively on the backend. The frontend is a thin display layer with no access to rule thresholds, validation logic, or decision-making code.
+
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│                         PRESENTATION LAYER                          │
+│                    FRONTEND (Angular 19 - Display Only)             │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │              Pool Chat Component (Angular 19)                │   │
+│  │              Pool Chat Component                             │   │
 │  │  • Message rendering  • File upload  • Status indicators    │   │
+│  │  • NO business logic  • NO rule data  • NO validation       │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              │                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │              Backend Chat Service (HTTP Client)              │   │
+│  │  • Thin API client  • No logic  • Passes data to backend    │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────┘
                                     │
-                                    ▼
+                                    ▼ HTTPS
 ┌────────────────────────────────────────────────────────────────────┐
-│                          ORCHESTRATION LAYER                        │
-│  ┌──────────────────────┐    ┌──────────────────────────────────┐  │
-│  │  PoolLogicChat       │───▶│  ClaudeAI Service                │  │
-│  │  Service             │    │  • Groq / Claude API             │  │
-│  │  • Intent routing    │    │  • Intent classification         │  │
-│  │  • Session mgmt      │    │  • Data query answering          │  │
-│  └──────────────────────┘    └──────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────┐
-│                           BUSINESS LOGIC LAYER                      │
-│  ┌────────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
-│  │ LoanValidation     │  │ DynamicEngine   │  │ Export          │  │
-│  │ Service            │  │ Service         │  │ Service         │  │
-│  │ • 12 rules         │  │ • API rules     │  │ • CSV/PDF/Excel │  │
-│  └────────────────────┘  └─────────────────┘  └─────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────┐
-│                            BACKEND (Express.js)                     │
+│                    BACKEND (Express.js - All Logic)                 │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │                   AI Service (Groq LLaMA 3.3 70B)           │    │
+│  │  • Intent classification  • Rule evaluation                 │    │
+│  │  • Validation logic       • Pool construction               │    │
+│  │  • Welcome message generation  • Data analysis              │    │
+│  └────────────────────────────────────────────────────────────┘    │
 │  ┌────────────────┐  ┌────────────────┐  ┌────────────────────┐    │
-│  │ Rules API      │  │ Audit API      │  │ Eligibility API    │    │
-│  │ CRUD + version │  │ Action logging │  │ Batch evaluate     │    │
+│  │ Chat API       │  │ Eligibility API│  │ Pooling API        │    │
+│  │ /chat/welcome  │  │ /eligibility/* │  │ /pooling/build     │    │
+│  │ /chat/message  │  │ Batch evaluate │  │ Pool construction  │    │
+│  └────────────────┘  └────────────────┘  └────────────────────┘    │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────┐    │
+│  │ Rules API      │  │ Audit API      │  │ Filter API         │    │
+│  │ CRUD + version │  │ Action logging │  │ /loans/filter      │    │
 │  └────────────────┘  └────────────────┘  └────────────────────┘    │
 └────────────────────────────────────────────────────────────────────┘
                                     │
@@ -130,6 +128,17 @@ See [docs/Agentic-Architecture-Guide.md](docs/Agentic-Architecture-Guide.md) for
 │       (File-based, version-controlled, human-readable)              │
 └────────────────────────────────────────────────────────────────────┘
 ```
+
+### Security Features
+
+| Aspect | Implementation |
+|--------|----------------|
+| **Rule Thresholds** | Never sent to frontend |
+| **Validation Logic** | Backend only |
+| **AI System Prompts** | Backend only (contain full rule details) |
+| **Welcome Messages** | AI-generated, not hardcoded |
+| **Error Handling** | Generic errors, no logic exposure |
+| **Bundle Inspection** | No business logic visible |
 
 ---
 
@@ -205,21 +214,22 @@ mortgage-max-guide-ng/
 │   │           ├── pages/pool-assistant-page/
 │   │           ├── pool-builder-agent.module.ts   # Plugin module
 │   │           └── services/
-│   │               ├── claude-ai.service.ts       # AI integration
-│   │               ├── dynamic-validation-engine.service.ts
+│   │               ├── backend-chat.service.ts    # Backend API client (thin)
+│   │               ├── claude-ai.service.ts       # AI integration (legacy)
 │   │               ├── eligibility-api.service.ts
 │   │               ├── export.service.ts
 │   │               ├── llm-adapter.service.ts
-│   │               ├── loan-validation.service.ts
 │   │               ├── pool-logic-chat.service.ts # Main orchestrator
 │   │               └── pooling-api.service.ts
 │   │
 │   └── environments/                 # Environment configs
 │
-├── backend/                          # Express.js API
+├── backend/                          # Express.js API (ALL business logic)
 │   ├── data/
-│   │   ├── rules.json               # Eligibility rules
+│   │   ├── rules.json               # Eligibility rules (with thresholds)
 │   │   └── audit-logs.json          # Audit trail
+│   ├── services/
+│   │   └── ai-service.js            # AI + rule evaluation (backend-only)
 │   ├── server.js                    # API server
 │   ├── Dockerfile
 │   └── docker-compose.yml
@@ -274,11 +284,19 @@ Rules are stored in `backend/data/rules.json` with provenance tracking:
 
 ## API Reference
 
+### Chat API (AI-Powered)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/chat/welcome` | Get AI-generated welcome message |
+| POST | `/api/chat/message` | Send message, get AI response with intent |
+
 ### Rules API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/rules` | List all rules |
+| GET | `/api/rules/summary` | Get rules without thresholds (safe for frontend) |
 | POST | `/api/rules` | Create new rule |
 | PUT | `/api/rules/:id` | Update rule (increments version) |
 | DELETE | `/api/rules/:id` | Delete rule |
@@ -294,8 +312,9 @@ Rules are stored in `backend/data/rules.json` with provenance tracking:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/eligibility/evaluate` | Validate loans |
-| POST | `/api/pooling/build` | Build pool |
+| POST | `/api/eligibility/evaluate` | Validate loans against all rules |
+| POST | `/api/pooling/build` | Build pool with eligible loans |
+| POST | `/api/loans/filter` | Filter loans by criteria |
 
 ---
 
@@ -304,15 +323,18 @@ Rules are stored in `backend/data/rules.json` with provenance tracking:
 ### Data Privacy
 - **No loan data persistence**: Loans are processed in-memory only
 - **No PII extraction**: System doesn't parse or store personal identifiers
-- **Client-side processing**: Validation can run entirely in browser
+- **Backend-only processing**: No business logic in browser bundles
 
 ### AI Safety
 - **No training on user data**: Uses pre-trained models only
-- **Deterministic fallbacks**: Critical operations don't require AI
+- **No local fallbacks**: Backend required for all operations
 - **Audit logging**: All AI interactions are logged
 - **Transparent reasoning**: AI provides confidence scores
 
 ### Security
+- **Rule thresholds never sent to frontend**
+- **Validation logic runs only on server**
+- **AI system prompts secured on backend**
 - **API keys in environment files** (not committed)
 - **CORS-protected backend**
 - **No shell execution** from user input

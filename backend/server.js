@@ -1,9 +1,16 @@
 /**
  * Loan Pool Advisor - Rules API Server
  * 
- * Simple Express.js backend for managing eligibility rules.
- * Uses file-based JSON storage for easy demo setup.
- * Includes audit logging and rule provenance tracking.
+ * Backend server for mortgage loan validation and pool construction.
+ * ALL business logic, rule evaluation, and AI interactions happen here.
+ * The frontend is a pure display layer with NO access to rules or thresholds.
+ * 
+ * Includes:
+ * - Rules management API (CRUD)
+ * - AI Chat endpoint (all messages go through AI)
+ * - Validation endpoint (rule evaluation on backend only)
+ * - Pool building endpoint
+ * - Audit logging
  */
 
 const express = require('express');
@@ -11,6 +18,9 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+
+// Import AI service for backend-only AI interactions
+const aiService = require('./services/ai-service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -399,6 +409,364 @@ app.post('/api/rules/import', (req, res) => {
 
 // ── Audit Logs API ────────────────────────────────────────────────
 
+// ══════════════════════════════════════════════════════════════════
+// AI CHAT API - All messages processed through backend AI
+// This ensures NO business logic is exposed to the frontend
+// ══════════════════════════════════════════════════════════════════
+
+// Session storage for conversation history (in production, use Redis/DB)
+const chatSessions = new Map();
+
+// POST /api/chat/welcome - Get AI-generated welcome message
+app.post('/api/chat/welcome', async (req, res) => {
+  const apiKey = req.headers['x-groq-api-key'] || process.env.GROQ_API_KEY;
+  
+  if (!apiKey) {
+    return res.status(400).json({
+      success: false,
+      error: 'Groq API key required. Set x-groq-api-key header or GROQ_API_KEY env var.'
+    });
+  }
+
+  try {
+    const welcomeMessage = await aiService.generateWelcomeMessage(apiKey);
+    
+    res.json({
+      success: true,
+      data: {
+        message: welcomeMessage,
+        provider: 'groq'
+      }
+    });
+  } catch (error) {
+    console.error('Welcome message error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to generate welcome message'
+    });
+  }
+});
+
+// POST /api/chat/message - Process a chat message through AI
+app.post('/api/chat/message', async (req, res) => {
+  const apiKey = req.headers['x-groq-api-key'] || process.env.GROQ_API_KEY;
+  const { message, sessionId, context } = req.body;
+  
+  if (!apiKey) {
+    return res.status(400).json({
+      success: false,
+      error: 'Groq API key required'
+    });
+  }
+
+  if (!message) {
+    return res.status(400).json({
+      success: false,
+      error: 'Message is required'
+    });
+  }
+
+  try {
+    // Get or create session history
+    const session = sessionId || uuidv4();
+    if (!chatSessions.has(session)) {
+      chatSessions.set(session, []);
+    }
+    const history = chatSessions.get(session);
+
+    // Process through AI
+    const response = await aiService.processChat(message, context, history, apiKey);
+
+    // Update history
+    history.push({ role: 'user', content: message });
+    history.push({ role: 'assistant', content: response.message });
+    
+    // Keep history manageable
+    if (history.length > 40) {
+      chatSessions.set(session, history.slice(-40));
+    }
+
+    res.json({
+      success: true,
+      data: {
+        sessionId: session,
+        intent: response.intent,
+        message: response.message,
+        reasoning: response.reasoning,
+        provider: 'groq'
+      }
+    });
+  } catch (error) {
+    console.error('Chat message error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to process message'
+    });
+  }
+});
+
+// DELETE /api/chat/session/:sessionId - Clear session history
+app.delete('/api/chat/session/:sessionId', (req, res) => {
+  chatSessions.delete(req.params.sessionId);
+  res.json({ success: true, message: 'Session cleared' });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// VALIDATION API - All rule evaluation happens on backend ONLY
+// Frontend NEVER sees rule thresholds or evaluation logic
+// ══════════════════════════════════════════════════════════════════
+
+// POST /api/eligibility/evaluate - Validate loans against rules
+app.post('/api/eligibility/evaluate', async (req, res) => {
+  const apiKey = req.headers['x-groq-api-key'] || process.env.GROQ_API_KEY;
+  const { loans } = req.body;
+
+  if (!Array.isArray(loans) || loans.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Loans array is required'
+    });
+  }
+
+  try {
+    // Validate loans on backend (rules never sent to frontend)
+    const results = aiService.validateLoans(loans);
+    const summary = aiService.buildPoolSummary(results, loans);
+
+    // Separate eligible and ineligible
+    const eligibleLoans = loans.filter(l => 
+      results.find(r => r.loanNumber === l.loanNumber)?.eligible
+    );
+    const ineligibleResults = results.filter(r => !r.eligible);
+
+    // Generate AI response for the validation
+    let aiMessage = null;
+    if (apiKey) {
+      try {
+        aiMessage = await aiService.generateValidationResponse(results, summary, apiKey);
+      } catch (aiErr) {
+        console.warn('AI response generation failed:', aiErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        eligibleLoans,
+        ineligibleLoans: ineligibleResults.map(r => ({
+          loanNumber: r.loanNumber,
+          poolNumber: r.poolNumber,
+          score: r.score,
+          failedRules: r.violations.map(v => ({
+            ruleId: v.rule.ruleId,
+            ruleName: v.rule.ruleName,
+            category: v.rule.category,
+            actualValue: v.actualValue,
+            expectedValue: v.expectedValue,
+            severity: v.severity,
+            explanation: v.explanation,
+            recommendedAction: v.recommendedAction,
+            guideReference: v.rule.guideReference,
+          }))
+        })),
+        summary: {
+          totalLoans: summary.totalLoans,
+          eligibleCount: summary.eligibleLoans,
+          ineligibleCount: summary.ineligibleLoans,
+          warningCount: summary.warningLoans,
+          totalUPB: summary.totalUPB,
+          eligibleUPB: summary.eligibleUPB,
+          weightedAvgRate: summary.weightedAvgRate,
+          weightedAvgCoupon: summary.weightedAvgCoupon,
+          weightedAvgAge: summary.weightedAvgAge,
+          ruleFailures: summary.ruleFailures || summary.topViolations?.map(v => ({
+            ruleId: '',
+            ruleName: v.ruleName,
+            count: v.count
+          })) || []
+        },
+        aiMessage
+      }
+    });
+
+    // Log the validation action
+    writeAuditLog({
+      action: 'eligibility.evaluate',
+      userId: req.headers['x-user-id'] || 'anonymous',
+      payload: { loanCount: loans.length },
+      result: { 
+        eligibleCount: eligibleLoans.length,
+        ineligibleCount: ineligibleResults.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Validation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Validation failed'
+    });
+  }
+});
+
+// POST /api/pooling/build - Build a pool from eligible loans
+app.post('/api/pooling/build', async (req, res) => {
+  const apiKey = req.headers['x-groq-api-key'] || process.env.GROQ_API_KEY;
+  const { loans, requestId, targetCoupon } = req.body;
+
+  if (!Array.isArray(loans) || loans.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Loans array is required'
+    });
+  }
+
+  try {
+    // Validate all loans first
+    const results = aiService.validateLoans(loans);
+    const summary = aiService.buildPoolSummary(results, loans);
+
+    const eligibleLoans = loans.filter(l =>
+      results.find(r => r.loanNumber === l.loanNumber)?.eligible
+    );
+    const ineligibleResults = results.filter(r => !r.eligible);
+
+    // Determine pool status
+    let status = 'FAILED';
+    if (eligibleLoans.length === loans.length) {
+      status = 'CREATED';
+    } else if (eligibleLoans.length > 0) {
+      status = 'PARTIAL';
+    }
+
+    // Calculate pool characteristics
+    const notionalAmount = eligibleLoans.reduce((sum, l) => sum + (l.upb || 0), 0);
+    const poolCoupon = notionalAmount > 0
+      ? eligibleLoans.reduce((sum, l) => sum + (l.couponRate || 0) * (l.upb || 0), 0) / notionalAmount
+      : targetCoupon || 0;
+
+    // Generate AI response
+    let aiMessage = null;
+    if (apiKey) {
+      try {
+        aiMessage = await aiService.generatePoolBuildResponse(
+          eligibleLoans,
+          ineligibleResults,
+          summary,
+          apiKey
+        );
+      } catch (aiErr) {
+        console.warn('AI response generation failed:', aiErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        poolType: 'MBS',
+        requestId: requestId || uuidv4(),
+        notionalAmount: Math.round(notionalAmount * 100) / 100,
+        poolCoupon: Math.round(poolCoupon * 1000) / 1000,
+        status,
+        eligibleCount: eligibleLoans.length,
+        invalidLoans: ineligibleResults.map(r => ({
+          loanNumber: r.loanNumber,
+          poolNumber: r.poolNumber,
+          failedRules: r.violations.map(v => ({
+            ruleId: v.rule.ruleId,
+            ruleName: v.rule.ruleName,
+            category: v.rule.category,
+            actualValue: v.actualValue,
+            expectedValue: v.expectedValue,
+            severity: v.severity,
+            explanation: v.explanation,
+            recommendedAction: v.recommendedAction,
+            guideReference: v.rule.guideReference,
+          }))
+        })),
+        aiMessage
+      }
+    });
+
+    // Log the pool build action
+    writeAuditLog({
+      action: 'pooling.build',
+      userId: req.headers['x-user-id'] || 'anonymous',
+      payload: { loanCount: loans.length, targetCoupon },
+      result: { 
+        status,
+        eligibleCount: eligibleLoans.length,
+        notionalAmount
+      }
+    });
+
+  } catch (error) {
+    console.error('Pool build error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Pool building failed'
+    });
+  }
+});
+
+// POST /api/loans/filter - Filter loans based on criteria (backend decides what matches)
+app.post('/api/loans/filter', (req, res) => {
+  const { loans, filter } = req.body;
+
+  if (!Array.isArray(loans)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Loans array is required'
+    });
+  }
+
+  try {
+    const filtered = aiService.filterLoans(loans, filter || {});
+    
+    res.json({
+      success: true,
+      data: {
+        originalCount: loans.length,
+        filteredCount: filtered.length,
+        loans: filtered
+      }
+    });
+  } catch (error) {
+    console.error('Filter error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Filtering failed'
+    });
+  }
+});
+
+// GET /api/rules/summary - Get rule summary WITHOUT exposing thresholds
+// This is what the UI can display - rule names and categories only
+app.get('/api/rules/summary', (req, res) => {
+  const data = readRulesData();
+  const enabledRules = data.rules.filter(r => r.enabled);
+
+  // Return ONLY non-sensitive information
+  res.json({
+    success: true,
+    data: {
+      totalRules: enabledRules.length,
+      categories: [...new Set(enabledRules.map(r => r.category))],
+      rules: enabledRules.map(r => ({
+        id: r.id,
+        name: r.name,
+        category: r.category,
+        description: r.description,
+        guideReference: r.guideReference,
+        severity: r.severity
+        // NOTE: We do NOT expose: operator, value, minValue, maxValue, etc.
+      }))
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+
 // POST /api/agent/logs - Create audit log entry
 app.post('/api/agent/logs', (req, res) => {
   const logEntry = {
@@ -507,26 +875,32 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('');
-  console.log('╔══════════════════════════════════════════════════════════╗');
-  console.log('║       Loan Pool Advisor - Rules API Server               ║');
-  console.log('╠══════════════════════════════════════════════════════════╣');
-  console.log(`║  🚀 Server running on http://localhost:${PORT}              ║`);
-  console.log('║                                                          ║');
-  console.log('║  Rules API:                                              ║');
-  console.log('║    GET    /api/rules         - List all rules            ║');
-  console.log('║    GET    /api/rules/:id     - Get single rule           ║');
-  console.log('║    POST   /api/rules         - Create new rule           ║');
-  console.log('║    PUT    /api/rules/:id     - Update rule               ║');
-  console.log('║    DELETE /api/rules/:id     - Delete rule               ║');
-  console.log('║    PATCH  /api/rules/:id/toggle - Toggle enabled         ║');
-  console.log('║    GET    /api/categories    - List categories           ║');
-  console.log('║    GET    /api/rules/export  - Export rules              ║');
-  console.log('║    POST   /api/rules/import  - Import rules              ║');
-  console.log('║                                                          ║');
-  console.log('║  Audit Logs API:                                         ║');
-  console.log('║    POST   /api/agent/logs    - Create audit log          ║');
-  console.log('║    GET    /api/agent/logs    - Query audit logs          ║');
-  console.log('║    GET    /api/agent/logs/:id - Get specific log         ║');
-  console.log('╚══════════════════════════════════════════════════════════╝');
+  console.log('╔══════════════════════════════════════════════════════════════════╗');
+  console.log('║         Loan Pool Advisor - Backend API Server                   ║');
+  console.log('║     All Business Logic Runs Here (Frontend is Display Only)      ║');
+  console.log('╠══════════════════════════════════════════════════════════════════╣');
+  console.log(`║  🚀 Server running on http://localhost:${PORT}                        ║`);
+  console.log('║                                                                  ║');
+  console.log('║  AI Chat API (all messages via AI):                              ║');
+  console.log('║    POST   /api/chat/welcome     - AI-generated welcome           ║');
+  console.log('║    POST   /api/chat/message     - Process chat through AI        ║');
+  console.log('║    DELETE /api/chat/session/:id - Clear session                  ║');
+  console.log('║                                                                  ║');
+  console.log('║  Validation API (rules never exposed to frontend):               ║');
+  console.log('║    POST   /api/eligibility/evaluate - Validate loans             ║');
+  console.log('║    POST   /api/pooling/build        - Build pool                 ║');
+  console.log('║    POST   /api/loans/filter         - Filter loans               ║');
+  console.log('║    GET    /api/rules/summary        - Rule info (no thresholds)  ║');
+  console.log('║                                                                  ║');
+  console.log('║  Rules Management API:                                           ║');
+  console.log('║    GET    /api/rules         - List all rules (admin only)       ║');
+  console.log('║    POST   /api/rules         - Create new rule                   ║');
+  console.log('║    PUT    /api/rules/:id     - Update rule                       ║');
+  console.log('║    DELETE /api/rules/:id     - Delete rule                       ║');
+  console.log('║                                                                  ║');
+  console.log('║  Audit Logs API:                                                 ║');
+  console.log('║    POST   /api/agent/logs    - Create audit log                  ║');
+  console.log('║    GET    /api/agent/logs    - Query audit logs                  ║');
+  console.log('╚══════════════════════════════════════════════════════════════════╝');
   console.log('');
 });
