@@ -1,4 +1,4 @@
-import { Component, inject, computed } from '@angular/core';
+import { Component, inject, computed, effect } from '@angular/core';
 import { PoolChatComponent } from '../../components/pool-chat/pool-chat.component';
 import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
 
@@ -10,7 +10,7 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
     <div class="pool-page-layout">
 
       <!-- ===== Left Panel: Info & Status ===== -->
-      <aside class="info-panel">
+      <aside class="info-panel" style="display: block !important; width: 280px !important; min-width: 280px !important; visibility: visible !important;">
 
         <!-- Agent Identity Card -->
         <div class="p-4 border-b border-gray-200">
@@ -41,14 +41,14 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
         </div>
 
         <!-- Data Overview -->
-        <div class="p-4 border-b border-gray-200">
+        <div class="p-4 border-b border-gray-200 bg-blue-50" style="display: block !important; visibility: visible !important; background-color: #eff6ff !important;">
           <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Data Overview</h3>
           <div class="space-y-2">
             <div class="flex items-center justify-between">
               <span class="text-xs text-gray-600">Loans Loaded</span>
-              <span class="text-xs font-semibold text-gray-800">{{ chatService.uploadedLoans().length }}</span>
+              <span class="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded">{{ loansCount() }}</span>
             </div>
-            @if (chatService.validationResults().length > 0) {
+            @if (hasValidationResults()) {
               <div class="flex items-center justify-between">
                 <span class="text-xs text-gray-600">Eligible</span>
                 <span class="text-xs font-semibold text-green-600">{{ eligibleCount() }}</span>
@@ -58,7 +58,7 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
                 <span class="text-xs font-semibold text-red-600">{{ ineligibleCount() }}</span>
               </div>
             }
-            @if (chatService.currentPoolSummary(); as summary) {
+            @if (poolSummary(); as summary) {
               <div class="mt-3 pt-3 border-t border-gray-100">
                 <div class="flex items-center justify-between">
                   <span class="text-xs text-gray-600">Eligible UPB</span>
@@ -142,10 +142,12 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
 
     .info-panel {
       width: 280px;
+      min-width: 280px;
       flex-shrink: 0;
       background: #ffffff;
       border-right: 1px solid #e5e7eb;
       overflow-y: auto;
+      display: block;
     }
 
     .chat-area {
@@ -160,6 +162,7 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
       }
       .info-panel {
         width: 100%;
+        min-width: auto;
         max-height: 200px;
         border-right: none;
         border-bottom: 1px solid #e5e7eb;
@@ -169,6 +172,15 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
 })
 export class PoolAssistantPageComponent {
   readonly chatService = inject(PoolLogicChatService);
+
+  // Local computed signals to ensure proper change detection
+  readonly loansCount = computed(() => {
+    const loans = this.chatService.uploadedLoans();
+    console.log('[DEBUG] loansCount computed - uploadedLoans length:', loans.length);
+    return loans.length;
+  });
+  readonly hasValidationResults = computed(() => this.chatService.validationResults().length > 0);
+  readonly poolSummary = computed(() => this.chatService.currentPoolSummary());
 
   readonly eligibleCount = computed(() =>
     this.chatService.validationResults().filter(r => r.eligible).length

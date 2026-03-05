@@ -16,7 +16,7 @@ src/app/
 │   └── components/
 │       └── header/           # Global navigation header
 │
-├── features/                 # Feature modules (lazy-loadable)
+├── features/                 # Feature modules (standalone components)
 │   ├── admin/                # Rules administration module
 │   │   ├── models/
 │   │   │   └── rule.model.ts       # Rule interface & constants
@@ -24,6 +24,21 @@ src/app/
 │   │   │   └── rules-manager/      # CRUD UI for eligibility rules
 │   │   └── services/
 │   │       └── rules-api.service.ts # API client for rules CRUD
+│   │
+│   ├── byol/                 # Bring Your Own Loans feature
+│   │   ├── components/
+│   │   │   ├── byol-tab/           # Main BYOL tab container
+│   │   │   ├── eligibility-results/ # Result display component
+│   │   │   ├── file-upload/        # File upload widget
+│   │   │   └── preview-table/      # Parsed data preview table
+│   │   ├── models/
+│   │   │   └── byol.model.ts       # BYOL loan/result types
+│   │   └── services/
+│   │       ├── csv-exporter.service.ts   # CSV export for ineligible loans
+│   │       ├── eligibility.service.ts    # Eligibility evaluation client
+│   │       ├── file-parser.service.ts    # CSV/XLSX/TSV file parser
+│   │       ├── loan-validator.service.ts # Schema validation
+│   │       └── notification.service.ts   # Toast notification system
 │   │
 │   ├── guide/                # Documentation guide feature
 │   │   ├── components/       # Guide UI components
@@ -38,10 +53,14 @@ src/app/
 │       │   └── pool-logic.model.ts # Loan, session, message types
 │       ├── pages/
 │       │   └── pool-assistant-page/ # Page container
+│       ├── pool-builder-agent.module.ts # Plugin module for library export
 │       └── services/
-│           ├── claude-ai.service.ts           # Claude AI integration
+│           ├── backend-chat.service.ts        # Backend API client (thin)
+│           ├── claude-ai.service.ts           # Multi-provider AI integration
 │           ├── dynamic-validation-engine.service.ts # API-based validation
 │           ├── eligibility-api.service.ts     # Backend eligibility API
+│           ├── export.service.ts              # Multi-format export
+│           ├── llm-adapter.service.ts         # NLG/NLU adapter
 │           ├── loan-validation.service.ts     # Local validation rules
 │           ├── pool-logic-chat.service.ts     # Main chat orchestrator
 │           └── pooling-api.service.ts         # Backend pooling API
@@ -50,11 +69,16 @@ src/app/
     ├── environment.ts        # Development settings
     └── environment.prod.ts   # Production settings
 
-backend/                      # Express.js API server
+backend/                      # Express.js API server (ALL business logic)
 ├── data/
-│   └── rules.json            # Rules storage file
+│   ├── rules.json            # Eligibility rules with provenance
+│   └── audit-logs.json       # Audit trail
+├── services/
+│   └── ai-service.js         # AI + rule evaluation engine
 ├── package.json              # Node dependencies
-└── server.js                 # REST API implementation
+├── server.js                 # REST API implementation
+├── Dockerfile                # Container image definition
+└── docker-compose.yml        # Container orchestration
 ```
 
 ---
@@ -182,7 +206,7 @@ The application enforces 11 MortgageMax eligibility rules:
 | STATUS-001 | Status | loanStatusCode in [A, C] |
 | AGE-001 | Age | loanAgeMonths ≥ 4 |
 | POOL-001 | Pool | poolNumber is required |
-| PREFIX-001 | Pool | mbsPoolPrefix in [FG, FH, FN] |
+| PREFIX-001 | Pool | mbsPoolPrefix in [MX, MA, MF] |
 
 ---
 
@@ -239,7 +263,7 @@ POST   /api/rules/import  → Import rules
 GET    /api/health        → Health check
 ```
 
-### Eligibility API (Planned)
+### Eligibility API
 
 ```
 POST /api/eligibility/evaluate
@@ -247,12 +271,20 @@ Body: { loans: LoanRecord[] }
 Returns: { eligibleLoans, ineligibleLoans, summary }
 ```
 
-### Pooling API (Planned)
+### Pooling API
 
 ```
 POST /api/pooling/build
 Body: { requestId, targetCoupon }
 Returns: { poolType, notionalAmount, status, invalidLoans }
+```
+
+### Filter API
+
+```
+POST /api/loans/filter
+Body: { loans: LoanRecord[], filters: FilterCriteria }
+Returns: { filteredLoans, appliedFilters }
 ```
 
 ---
@@ -265,14 +297,21 @@ Returns: { poolType, notionalAmount, status, invalidLoans }
 // environment.ts (development)
 export const environment = {
   production: false,
-  claude: {
-    apiKey: '',                    // Set for live mode
-    proxyUrl: '/api/claude',       // Backend proxy endpoint
-    model: 'claude-sonnet-4-20250514',
-    maxTokens: 1024,
-    enabled: false                 // Demo mode by default
+  ai: {
+    defaultProvider: 'groq',
+    groq: {
+      apiKey: '',             // Get one at https://console.groq.com
+      model: 'llama-3.3-70b-versatile',
+      maxTokens: 1024,
+    },
+    claude: {
+      apiKey: '',             // Paid API key
+      proxyUrl: '/api/claude',
+      model: 'claude-sonnet-4-20250514',
+      maxTokens: 1024,
+    },
   },
-  rulesApiUrl: 'http://localhost:3001/api'
+  rulesApiUrl: 'http://localhost:3001/api',
 };
 ```
 
@@ -316,8 +355,8 @@ ng test
 
 ## Future Enhancements
 
-1. **Wire DynamicValidationEngine** into main chat service for runtime rule management
-2. **Build backend APIs** for `/api/eligibility/evaluate` and `/api/pooling/build`
-3. **Add rule versioning** and audit trail in admin portal
-4. **Implement bulk operations** in rules manager
-5. **Add user authentication** for admin portal
+1. **User authentication** for admin portal and role-based access
+2. **Database migration** from file-based JSON to PostgreSQL or MongoDB
+3. **Bulk operations** in rules manager (import/export, batch enable/disable)
+4. **Lazy loading** routes with `loadComponent()` for production optimization
+5. **Shared services** between BYOL and Pool Assistant for parsing/validation

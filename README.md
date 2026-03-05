@@ -26,7 +26,7 @@
 
 ## Overview
 
-**Loan Pool Advisor** is an intelligent assistant for mortgage servicers delivering loans to MortgageMax (Freddie Mac style guidelines). It automates eligibility validation against the Seller/Servicer Guide and helps construct compliant MBS (Mortgage-Backed Securities) pools.
+**Loan Pool Advisor** is an intelligent assistant for mortgage servicers delivering loans to MortgageMax. It automates eligibility validation against the Seller/Servicer Guide and helps construct compliant MBS (Mortgage-Backed Securities) pools.
 
 ### What Makes This Different?
 
@@ -74,8 +74,15 @@ See [docs/Agentic-Architecture-Guide.md](docs/Agentic-Architecture-Guide.md) for
 - Ineligible loan reports with remediation guidance
 - Similar eligible loan suggestions
 
-### 🔒 Enterprise Safety Features
-- API key management (not stored in code)
+### � Bring Your Own Loans (BYOL)
+- Upload CSV, XLSX, or TSV files for instant eligibility evaluation
+- Flexible field-name aliases for easy import
+- Preview table with parsed data
+- Download ineligible loans report as CSV
+- Toast notifications for workflow feedback
+
+### �🔒 Enterprise Safety Features
+- API keys managed via environment configuration (never committed)
 - Audit logging for all actions
 - Rule provenance tracking (author, version, approvals)
 - No loan data modification — analysis only
@@ -162,10 +169,24 @@ npm install
 
 # Install backend dependencies
 cd backend && npm install && cd ..
-
-# Configure API key
-# Edit src/environments/environment.ts and add your Groq API key
 ```
+
+### Configuration
+
+Configure your API key in `src/environments/environment.ts`:
+
+```typescript
+ai: {
+  defaultProvider: 'groq',
+  groq: {
+    apiKey: 'your-groq-api-key',  // Get one at https://console.groq.com
+    model: 'llama-3.3-70b-versatile',
+  },
+},
+```
+
+> **Note:** Never commit API keys. The `environment.ts` file ships with empty keys by default.
+> For Docker deployments, pass `GROQ_API_KEY` as an environment variable.
 
 ### Running the Application
 
@@ -252,7 +273,7 @@ mortgage-max-guide-ng/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ai.groq.apiKey` | Groq API key | `''` |
+| `ai.groq.apiKey` | Groq API key | `''` (set via env var or config) |
 | `ai.claude.apiKey` | Claude API key | `''` |
 | `ai.defaultProvider` | `'groq'` or `'claude'` | `'groq'` |
 | `rulesApiUrl` | Backend API URL | `'http://localhost:3001/api'` |
@@ -335,7 +356,7 @@ Rules are stored in `backend/data/rules.json` with provenance tracking:
 - **Rule thresholds never sent to frontend**
 - **Validation logic runs only on server**
 - **AI system prompts secured on backend**
-- **API keys in environment files** (not committed)
+- **API keys configured via environment**, never committed to source control
 - **CORS-protected backend**
 - **No shell execution** from user input
 - **Input validation** on all endpoints

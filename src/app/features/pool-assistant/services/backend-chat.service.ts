@@ -185,7 +185,11 @@ export class BackendChatService {
       throw new Error('Failed to get welcome message');
     }
     
-    return response.data;
+    // Sanitize welcome message
+    const data = response.data;
+    data.message = this.sanitizeMessage(data.message);
+    
+    return data;
   }
 
   /**
@@ -204,7 +208,51 @@ export class BackendChatService {
       throw new Error(response.error || 'Failed to process message');
     }
     
-    return response.data;
+    // Sanitize the message to remove any JSON that might have leaked through
+    const data = response.data;
+    data.message = this.sanitizeMessage(data.message);
+    
+    return data;
+  }
+
+  /**
+   * Remove any JSON artifacts from message before displaying to user
+   */
+  private sanitizeMessage(message: string): string {
+    if (!message || typeof message !== 'string') {
+      return 'I processed your request.';
+    }
+
+    let clean = message;
+    
+    // Remove leading "json" word (common AI mistake)
+    clean = clean.replace(/^json\s*/i, '');
+    
+    // Remove code block markers
+    clean = clean.replace(/```json\s*/gi, '');
+    clean = clean.replace(/```\s*/g, '');
+    
+    // Remove JSON objects that contain intent/action (technical metadata)
+    clean = clean.replace(/\{\s*"intent"\s*:[\s\S]*?\}\s*\}\s*/gi, '');
+    
+    // Remove standalone JSON fragments
+    clean = clean.replace(/"intent"\s*:\s*\{[^}]+\}/gi, '');
+    clean = clean.replace(/"action"\s*:\s*"[^"]+"/gi, '');
+    clean = clean.replace(/"confidence"\s*:\s*[\d.]+/gi, '');
+    clean = clean.replace(/"parameters"\s*:\s*\{[^}]*\}/gi, '');
+    clean = clean.replace(/"message"\s*:\s*"/gi, '');
+    clean = clean.replace(/"reasoning"\s*:\s*"[^"]*"/gi, '');
+    
+    // Clean up leftover JSON syntax
+    clean = clean.replace(/^\s*\{\s*,?\s*/g, '');
+    clean = clean.replace(/\s*,?\s*\}\s*$/g, '');
+    clean = clean.replace(/^\s*"\s*/g, '');
+    clean = clean.replace(/\s*"\s*,?\s*$/g, '');
+    
+    // Clean multiple newlines
+    clean = clean.replace(/\n{3,}/g, '\n\n').trim();
+    
+    return clean || 'I processed your request.';
   }
 
   /**

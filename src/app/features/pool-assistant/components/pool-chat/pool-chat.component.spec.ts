@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideHttpClient } from '@angular/common/http';
 import { PoolChatComponent } from './pool-chat.component';
 
 describe('PoolChatComponent', () => {
@@ -7,7 +8,8 @@ describe('PoolChatComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [PoolChatComponent]
+      imports: [PoolChatComponent],
+      providers: [provideHttpClient()]
     }).compileComponents();
 
     fixture = TestBed.createComponent(PoolChatComponent);
@@ -20,30 +22,28 @@ describe('PoolChatComponent', () => {
   });
 
   describe('Initial State', () => {
-    it('should have empty message input', () => {
-      expect(component.messageInput()).toBe('');
+    it('should have empty input text', () => {
+      expect(component.inputText()).toBe('');
     });
 
-    it('should not be sending', () => {
-      expect(component.isSending()).toBe(false);
+    it('should not be dragging', () => {
+      expect(component.isDragging()).toBe(false);
+    });
+
+    it('should not show suggestions initially', () => {
+      expect(component.showSuggestions()).toBe(false);
     });
   });
 
-  describe('Message Input', () => {
-    it('should update message input', () => {
-      component.messageInput.set('test message');
-      expect(component.messageInput()).toBe('test message');
-    });
-
-    it('should clear input after sending', async () => {
-      component.messageInput.set('test message');
-      // The actual send would require mocking the chat service
+  describe('Input Text', () => {
+    it('should update input text', () => {
+      component.inputText.set('test message');
+      expect(component.inputText()).toBe('test message');
     });
   });
 
   describe('File Upload', () => {
     it('should have file input reference', () => {
-      // Component should handle file uploads
       expect(component).toBeTruthy();
     });
   });

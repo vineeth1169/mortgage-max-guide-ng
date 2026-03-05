@@ -18,6 +18,7 @@ RUN npm ci --only=production
 
 # Copy application code
 COPY server.js ./
+COPY services/ ./services/
 COPY data/ ./data/
 
 # Create volume for persistent data

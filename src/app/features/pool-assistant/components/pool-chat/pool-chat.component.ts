@@ -808,13 +808,19 @@ export class PoolChatComponent implements AfterViewChecked {
     if (!text) return '';
 
     let html = text;
+    
+    // Pre-process: convert tab-separated tables to proper markdown tables
+    html = this.normalizeTableFormats(html);
 
     // Escape HTML
     html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-    // Headers
-    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    // Headers - handle cases where there's no space after # or content runs together
+    html = html.replace(/^### ?(.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## ?(.+)$/gm, '<h2>$1</h2>');
+    // Handle inline headers (###Header becomes proper header)
+    html = html.replace(/([^#])###([^#\s])/g, '$1\n### $2');
+    html = html.replace(/([^#])##([^#\s])/g, '$1\n## $2');
 
     // Bold
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -831,8 +837,8 @@ export class PoolChatComponent implements AfterViewChecked {
     // Tables
     html = this.renderTables(html);
 
-    // Unordered lists
-    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    // Unordered lists (also handle * as list markers)
+    html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
     html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
 
     // Clean up double line breaks
@@ -843,6 +849,40 @@ export class PoolChatComponent implements AfterViewChecked {
     html = html.replace(/<\/blockquote><br\/?><blockquote>/g, '<br/>');
 
     return html;
+  }
+
+  /**
+   * Normalize various table formats from AI into proper markdown tables
+   */
+  private normalizeTableFormats(text: string): string {
+    const lines = text.split('\n');
+    const result: string[] = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+      
+      // Check if this line looks like a tab-separated table row
+      if (line.includes('\t') && !line.startsWith('|')) {
+        const cells = line.split('\t').map(c => c.trim()).filter(c => c);
+        if (cells.length >= 2) {
+          // Convert to markdown table format
+          result.push('| ' + cells.join(' | ') + ' |');
+          
+          // If this is the first row (header), add separator
+          if (i === 0 || !lines[i - 1].includes('\t')) {
+            result.push('|' + cells.map(() => '---').join('|') + '|');
+          }
+          i++;
+          continue;
+        }
+      }
+      
+      result.push(line);
+      i++;
+    }
+
+    return result.join('\n');
   }
 
   private renderTables(html: string): string {

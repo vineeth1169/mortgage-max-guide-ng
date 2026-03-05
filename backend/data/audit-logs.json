@@ -1,7 +1,195 @@
 {
-  "logs": [],
+  "logs": [
+    {
+      "id": "088ec6d9-0753-4e27-b76c-389796894759",
+      "timestamp": "2026-02-26T00:27:56.078Z",
+      "action": "eligibility.evaluate",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 100
+      },
+      "result": {
+        "eligibleCount": 65,
+        "ineligibleCount": 35
+      }
+    },
+    {
+      "id": "8bfbe341-d4fc-42f5-ad72-969b11655065",
+      "timestamp": "2026-02-26T01:35:14.368Z",
+      "action": "eligibility.evaluate",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 100
+      },
+      "result": {
+        "eligibleCount": 65,
+        "ineligibleCount": 35
+      }
+    },
+    {
+      "id": "8436206b-008d-46b7-9a75-a08015e2ed71",
+      "timestamp": "2026-02-27T00:39:41.120Z",
+      "action": "eligibility.evaluate",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 100
+      },
+      "result": {
+        "eligibleCount": 65,
+        "ineligibleCount": 35
+      }
+    },
+    {
+      "id": "a7cf8985-5e85-41c2-a058-7d69ba46f5b8",
+      "timestamp": "2026-02-27T01:52:05.998Z",
+      "action": "eligibility.evaluate",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 108
+      },
+      "result": {
+        "eligibleCount": 67,
+        "ineligibleCount": 41
+      }
+    },
+    {
+      "id": "c79d892d-fb36-4fd5-8f0a-de297632794e",
+      "timestamp": "2026-02-27T20:25:43.419Z",
+      "action": "pooling.build",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 100
+      },
+      "result": {
+        "status": "PARTIAL",
+        "eligibleCount": 65,
+        "notionalAmount": 20510000
+      }
+    },
+    {
+      "id": "565b1112-9c20-4576-a580-51d22d401a79",
+      "timestamp": "2026-02-27T20:28:16.612Z",
+      "action": "eligibility.evaluate",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 100
+      },
+      "result": {
+        "eligibleCount": 65,
+        "ineligibleCount": 35
+      }
+    },
+    {
+      "id": "41e6a075-7d24-43d2-92c5-4d97896f574d",
+      "timestamp": "2026-02-27T20:43:40.235Z",
+      "action": "eligibility.evaluate",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 20
+      },
+      "result": {
+        "eligibleCount": 11,
+        "ineligibleCount": 9
+      }
+    },
+    {
+      "id": "97ed3e89-5568-46c0-bdfb-5dfb9a4a9780",
+      "timestamp": "2026-02-27T21:46:10.099Z",
+      "action": "eligibility.evaluate",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 20
+      },
+      "result": {
+        "eligibleCount": 11,
+        "ineligibleCount": 9
+      }
+    },
+    {
+      "id": "9a06dae8-5bf7-40ad-8917-af5ca28b3bf9",
+      "timestamp": "2026-02-27T21:47:00.470Z",
+      "action": "pooling.build",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 20
+      },
+      "result": {
+        "status": "PARTIAL",
+        "eligibleCount": 11,
+        "notionalAmount": 3140000
+      }
+    },
+    {
+      "id": "82d46133-a579-4362-9c84-74cc6867f1ee",
+      "timestamp": "2026-02-27T21:54:13.092Z",
+      "action": "rule.updated",
+      "ruleId": "RATE-001",
+      "ruleName": "Interest Rate Range",
+      "userId": "system",
+      "previousVersion": "1.0.0",
+      "newVersion": "1.0.1",
+      "changes": {
+        "before": {
+          "id": "RATE-001",
+          "name": "Interest Rate Range",
+          "category": "rate",
+          "description": "The note rate must be greater than 0% and not exceed 12%",
+          "requirement": "0% < interestRate ≤ 12%",
+          "field": "interestRate",
+          "operator": "range",
+          "minValue": 0.001,
+          "maxValue": 15,
+          "minInclusive": false,
+          "maxInclusive": true,
+          "severity": "error",
+          "guideReference": "Section 4301.1",
+          "explanation": "Interest rates must be positive and within reasonable market bounds. Loans with 0% or negative rates are typically special programs not eligible for standard pool delivery. Rates exceeding 12% may indicate high-cost loans requiring special handling.",
+          "remediation": "Verify the interest rate is correctly entered. If the rate is outside normal bounds, check if this loan qualifies for a special program.",
+          "enabled": true,
+          "createdAt": "2025-01-01T00:00:00Z",
+          "updatedAt": "2026-02-22T04:15:19.224Z",
+          "provenance": {
+            "author": "system",
+            "version": "1.0.0",
+            "effectiveDate": "2025-01-01T00:00:00Z",
+            "approvedBy": "Compliance Team",
+            "approvalDate": "2024-12-15T00:00:00Z",
+            "changeReason": "Initial rule definition based on MortgageMax Guide Section 4301.1"
+          }
+        },
+        "after": {
+          "id": "RATE-001",
+          "name": "Interest Rate Range",
+          "category": "rate",
+          "description": "The note rate must be greater than 0% and not exceed 12%",
+          "requirement": "0% < interestRate ≤ 12%",
+          "field": "interestRate",
+          "operator": "range",
+          "minValue": 0.001,
+          "maxValue": 20,
+          "minInclusive": false,
+          "maxInclusive": true,
+          "severity": "error",
+          "guideReference": "Section 4301.1",
+          "explanation": "Interest rates must be positive and within reasonable market bounds. Loans with 0% or negative rates are typically special programs not eligible for standard pool delivery. Rates exceeding 12% may indicate high-cost loans requiring special handling.",
+          "remediation": "Verify the interest rate is correctly entered. If the rate is outside normal bounds, check if this loan qualifies for a special program.",
+          "enabled": true,
+          "createdAt": "2025-01-01T00:00:00Z",
+          "updatedAt": "2026-02-27T21:54:13.091Z",
+          "provenance": {
+            "author": "system",
+            "version": "1.0.1",
+            "effectiveDate": "2025-01-01T00:00:00Z",
+            "approvedBy": "Compliance Team",
+            "approvalDate": "2024-12-15T00:00:00Z",
+            "changeReason": "Initial rule definition based on MortgageMax Guide Section 4301.1"
+          }
+        }
+      }
+    }
+  ],
   "metadata": {
-    "totalEntries": 0,
-    "lastUpdated": "2026-02-23T00:00:00.000Z"
+    "totalEntries": 10,
+    "lastUpdated": "2026-02-27T21:54:13.092Z"
   }
 }

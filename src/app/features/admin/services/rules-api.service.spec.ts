@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { RulesApiService } from './rules-api.service';
-import { Rule } from '../models/rule.model';
+import { Rule, RuleFormData } from '../models/rule.model';
 
 describe('RulesApiService', () => {
   let service: RulesApiService;
@@ -11,11 +11,10 @@ describe('RulesApiService', () => {
   const mockRule: Rule = {
     id: 'test-rule-1',
     name: 'Test Rule',
-    ruleId: 'TEST-001',
     category: 'rate',
     description: 'A test rule',
     requirement: 'Must pass test',
-    field: 'testField',
+    field: 'interestRate',
     operator: 'gt',
     value: 0,
     severity: 'error',
@@ -77,9 +76,8 @@ describe('RulesApiService', () => {
       httpMock.expectOne('http://localhost:3001/api/rules').flush({ success: true, data: [] });
       await loadPromise;
 
-      const newRule: Omit<Rule, 'id' | 'createdAt' | 'updatedAt'> = {
+      const newRule: RuleFormData = {
         name: 'New Rule',
-        ruleId: 'NEW-001',
         category: 'balance',
         description: 'A new rule',
         requirement: 'Must be positive',
@@ -100,7 +98,8 @@ describe('RulesApiService', () => {
       req.flush({ success: true, data: { ...newRule, id: 'new-id', createdAt: '', updatedAt: '' } });
 
       const result = await createPromise;
-      expect(result).toBe(true);
+      expect(result.success).toBe(true);
+      expect(result.rule).toBeDefined();
       expect(service.rules().length).toBe(1);
     });
   });
@@ -120,7 +119,7 @@ describe('RulesApiService', () => {
       req.flush({ success: true, data: { ...mockRule, ...updates } });
 
       const result = await updatePromise;
-      expect(result).toBe(true);
+      expect(result.success).toBe(true);
       expect(service.rules()[0].name).toBe('Updated Rule');
     });
   });
@@ -139,7 +138,7 @@ describe('RulesApiService', () => {
       req.flush({ success: true });
 
       const result = await deletePromise;
-      expect(result).toBe(true);
+      expect(result.success).toBe(true);
       expect(service.rules().length).toBe(0);
     });
   });
@@ -158,13 +157,13 @@ describe('RulesApiService', () => {
       req.flush({ success: true, data: { ...mockRule, enabled: false } });
 
       const result = await togglePromise;
-      expect(result).toBe(true);
+      expect(result.success).toBe(true);
       expect(service.rules()[0].enabled).toBe(false);
     });
   });
 
   describe('computed properties', () => {
-    it('should compute enabled rules count', async () => {
+    it('should compute enabled rules', async () => {
       const rules: Rule[] = [
         { ...mockRule, id: '1', enabled: true },
         { ...mockRule, id: '2', enabled: false },
@@ -175,24 +174,9 @@ describe('RulesApiService', () => {
       httpMock.expectOne('http://localhost:3001/api/rules').flush({ success: true, data: rules });
       await loadPromise;
 
-      expect(service.enabledCount()).toBe(2);
-      expect(service.disabledCount()).toBe(1);
-    });
-
-    it('should compute rules by category', async () => {
-      const rules: Rule[] = [
-        { ...mockRule, id: '1', category: 'rate' },
-        { ...mockRule, id: '2', category: 'rate' },
-        { ...mockRule, id: '3', category: 'balance' }
-      ];
-
-      const loadPromise = service.loadRules();
-      httpMock.expectOne('http://localhost:3001/api/rules').flush({ success: true, data: rules });
-      await loadPromise;
-
-      const byCategory = service.rulesByCategory();
-      expect(byCategory['rate'].length).toBe(2);
-      expect(byCategory['balance'].length).toBe(1);
+      expect(service.enabledRules().length).toBe(2);
+      expect(service.disabledRules().length).toBe(1);
+      expect(service.ruleCount()).toBe(3);
     });
   });
 });

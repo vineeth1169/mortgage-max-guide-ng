@@ -9,7 +9,7 @@
       "field": "interestRate",
       "operator": "range",
       "minValue": 0.001,
-      "maxValue": 15,
+      "maxValue": 20,
       "minInclusive": false,
       "maxInclusive": true,
       "severity": "error",
@@ -18,10 +18,10 @@
       "remediation": "Verify the interest rate is correctly entered. If the rate is outside normal bounds, check if this loan qualifies for a special program.",
       "enabled": true,
       "createdAt": "2025-01-01T00:00:00Z",
-      "updatedAt": "2026-02-22T04:15:19.224Z",
+      "updatedAt": "2026-02-27T21:54:13.091Z",
       "provenance": {
         "author": "system",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "effectiveDate": "2025-01-01T00:00:00Z",
         "approvedBy": "Compliance Team",
         "approvalDate": "2024-12-15T00:00:00Z",
@@ -196,18 +196,18 @@
       "name": "Valid MBS Prefix",
       "category": "pool",
       "description": "MBS pool prefix must be one of the valid codes",
-      "requirement": "mbsPoolPrefix in [FG, FH, FN]",
+      "requirement": "mbsPoolPrefix in [MX, MA, MF]",
       "field": "mbsPoolPrefix",
       "operator": "in",
       "values": [
-        "FG",
-        "FH",
-        "FN"
+        "MX",
+        "MA",
+        "MF"
       ],
       "severity": "warning",
       "guideReference": "Section 4701.2",
-      "explanation": "FG=Gold PC (fixed rate), FH=ARM (adjustable rate), FN=Fixed Rate Note. The prefix determines pool type and investor certificate class.",
-      "remediation": "Assign the correct prefix based on loan characteristics. Fixed-rate loans typically use FG or FN.",
+      "explanation": "MX=Fixed Rate Pool, MA=Adjustable Rate Pool, MF=Fixed Rate Note. The prefix determines pool type and investor certificate class.",
+      "remediation": "Assign the correct prefix based on loan characteristics. Fixed-rate loans typically use MX or MF.",
       "enabled": true,
       "createdAt": "2025-01-01T00:00:00Z",
       "updatedAt": "2025-01-01T00:00:00Z"
@@ -215,7 +215,7 @@
   ],
   "metadata": {
     "version": "1.0.0",
-    "lastUpdated": "2026-02-24T03:18:05.760Z",
+    "lastUpdated": "2026-02-27T21:54:13.093Z",
     "totalRules": 11
   }
 }

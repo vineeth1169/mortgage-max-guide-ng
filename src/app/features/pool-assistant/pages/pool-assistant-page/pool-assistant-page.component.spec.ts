@@ -1,4 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { PoolAssistantPageComponent } from './pool-assistant-page.component';
 
 describe('PoolAssistantPageComponent', () => {
@@ -7,7 +9,8 @@ describe('PoolAssistantPageComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [PoolAssistantPageComponent]
+      imports: [PoolAssistantPageComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting()]
     }).compileComponents();
 
     fixture = TestBed.createComponent(PoolAssistantPageComponent);

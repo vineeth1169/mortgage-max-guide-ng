@@ -171,6 +171,7 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   readonly navLinks = [
     { label: 'Home', route: '/guide/4100' },
+    { label: 'Bring Your Own Loans', route: '/bring-your-own-loans' },
     { label: 'Loan Pool Advisor', route: '/pool-assistant' },
     { label: 'Admin', route: '/admin/rules' },
     { label: 'Bulletins', route: '/guide/4100' },
@@ -193,6 +194,9 @@ export class HeaderComponent implements OnInit, OnDestroy {
 
   isActive(route: string): boolean {
     const url = this.currentUrl();
+    if (route === '/bring-your-own-loans') {
+      return url.startsWith('/bring-your-own-loans');
+    }
     if (route === '/pool-assistant') {
       return url.startsWith('/pool-assistant');
     }

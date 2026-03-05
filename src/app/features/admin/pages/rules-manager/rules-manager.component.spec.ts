@@ -23,8 +23,8 @@ describe('RulesManagerComponent', () => {
   it('should have initial state', () => {
     expect(component.showModal()).toBe(false);
     expect(component.editingRule()).toBeNull();
-    expect(component.searchTerm()).toBe('');
-    expect(component.selectedCategory()).toBe('all');
+    expect(component.searchQuery).toBe('');
+    expect(component.selectedCategory).toBe('');
   });
 
   describe('UI Interactions', () => {
@@ -40,19 +40,19 @@ describe('RulesManagerComponent', () => {
       expect(component.showModal()).toBe(false);
     });
 
-    it('should set search term', () => {
-      component.searchTerm.set('test');
-      expect(component.searchTerm()).toBe('test');
+    it('should set search query', () => {
+      component.searchQuery = 'test';
+      expect(component.searchQuery).toBe('test');
     });
 
     it('should set category filter', () => {
-      component.selectedCategory.set('rate');
-      expect(component.selectedCategory()).toBe('rate');
+      component.selectedCategory = 'rate';
+      expect(component.selectedCategory).toBe('rate');
     });
   });
 
   describe('Computed Properties', () => {
-    it('should compute filtered rules with search term', () => {
+    it('should compute filtered rules with search query', () => {
       // Initial state - no rules loaded
       expect(component.filteredRules().length).toBe(0);
     });

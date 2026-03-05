@@ -5,6 +5,8 @@ describe('ClaudeAIService', () => {
   let service: ClaudeAIService;
 
   beforeEach(() => {
+    // Clear localStorage to avoid polluting tests
+    try { localStorage.removeItem('mortgagemax_ai_provider'); } catch {}
     TestBed.configureTestingModule({});
     service = TestBed.inject(ClaudeAIService);
   });

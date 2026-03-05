@@ -136,7 +136,9 @@ export class PoolLogicChatService {
   }
 
   private setUploadedLoans(loans: LoanRecord[]): void {
+    console.log('[DEBUG] setUploadedLoans called with', loans.length, 'loans');
     this.updateActiveSession(s => ({ ...s, uploadedLoans: loans }));
+    console.log('[DEBUG] After update - uploadedLoans:', this.uploadedLoans().length);
   }
 
   private setValidationResults(results: LoanValidationResult[]): void {
@@ -152,6 +154,13 @@ export class PoolLogicChatService {
   async sendMessage(content: string): Promise<void> {
     const userMsg = this.createMessage('user', content);
     this.appendMessage(userMsg);
+    
+    // Handle retry command - user wants to reconnect to backend
+    if (content.toLowerCase().trim() === 'retry') {
+      await this.retryBackendConnection();
+      return;
+    }
+    
     await this.processUserInput(content);
   }
 
@@ -269,6 +278,9 @@ export class PoolLogicChatService {
     this.setPoolSummary(null);
     this.updateAgentStatus('idle', 0, '');
     
+    // Stop any background polling
+    this.stopBackendHealthPolling();
+    
     // Clear backend session for fresh conversation
     if (this.backendSessionId) {
       this.backendChat.clearSession(this.backendSessionId).catch(() => {});
@@ -349,6 +361,16 @@ export class PoolLogicChatService {
   // ── Intent Processing ─────────────────────────────────────────────
 
   private async processUserInput(input: string): Promise<void> {
+    // If welcome wasn't fetched, mark it as fetched (user is now interacting)
+    // Don't trigger welcome again - just proceed with processing
+    if (!this.welcomeFetched) {
+      const isHealthy = await this.backendChat.checkHealth().catch(() => false);
+      if (isHealthy) {
+        this.stopBackendHealthPolling();
+        this.welcomeFetched = true; // Mark as fetched without showing again
+      }
+    }
+    
     // Always use AI (Groq or Claude) for intent classification
     await this.processWithClaude(input);
   }
@@ -370,21 +392,33 @@ export class PoolLogicChatService {
 
       // Store session ID for conversation continuity
       this.backendSessionId = response.sessionId;
+      
+      // If we got here, backend is working - mark welcome as complete
+      if (!this.welcomeFetched) {
+        this.stopBackendHealthPolling();
+        this.welcomeFetched = true;
+      }
 
       this.updateAgentStatus('idle', 0, '');
 
       // For intents where AI provides the complete response, use AI's message directly
-      const aiMessageIntents = ['data-query', 'general', 'help', 'explain-rule'];
+      const aiMessageIntents = ['data-query', 'general', 'help', 'explain-rule', 'summary'];
       if (aiMessageIntents.includes(response.intent.action) && response.message) {
         this.appendAssistantMessage(response.message);
         return;
       }
 
-      // For action intents that require data operations, dispatch to handlers
+      // For action intents (validate, build-pool, filter, etc.), the handlers create their own
+      // formatted responses, so we don't show the AI message separately to avoid duplication
       await this.dispatchIntent(response.intent.action, input, response.intent.parameters);
     } catch (err: any) {
       this.updateAgentStatus('idle', 0, '');
-      this.appendAssistantMessage(`⚠️ **Error**: ${err.message || 'Failed to process request'}`);
+      // Let AI generate error context when possible - pass error to backend for AI response
+      const errorContext = err.message || 'Connection error';
+      this.appendAssistantMessage(
+        `I couldn't process that request. ${errorContext}\n\n` +
+        `If the backend just started, try your request again in a moment.`
+      );
     }
   }
 
@@ -1045,7 +1079,7 @@ export class PoolLogicChatService {
       case 'POOL-001':
         return `Assign a valid pool number (e.g., PL-001) before delivery.`;
       case 'PREFIX-001':
-        return `Assign valid MBS prefix: FG (Gold), FH (ARM), or FN (Fixed). Current: "${actual || 'none'}".`;
+        return `Assign valid MBS prefix: MX (Fixed Rate), MA (Adjustable Rate), or MF (Fixed Rate Note). Current: "${actual || 'none'}".`;
       default:
         return `Review ${ruleId} requirements and correct ${actual} to meet ${expected} criteria.`;
     }
@@ -1175,8 +1209,8 @@ export class PoolLogicChatService {
           attachments: m.attachments,
         })),
         uploadedLoans: s.uploadedLoans,
-        validationResults: [], // don't persist results
-        poolSummary: null,
+        validationResults: s.validationResults, // persist validation results for Data Overview
+        poolSummary: s.poolSummary, // persist pool summary for Data Overview
       }));
       sessionStorage.setItem(PoolLogicChatService.SESSIONS_KEY, JSON.stringify(sessions));
       sessionStorage.setItem(PoolLogicChatService.ACTIVE_SESSION_KEY, this.activeSessionId());
@@ -1187,32 +1221,118 @@ export class PoolLogicChatService {
 
   // ── Utilities ─────────────────────────────────────────────────────
 
+  // Track if welcome has been successfully fetched
+  private welcomeFetched = false;
+  private welcomeRetryCount = 0;
+  private readonly MAX_WELCOME_RETRIES = 3;
+  private welcomeRetryTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
   private addSystemWelcome(): void {
     // Get AI-generated welcome message from backend
+    this.welcomeFetched = false;
+    this.welcomeRetryCount = 0;
     this.fetchAIWelcomeMessage();
   }
 
   /**
-   * Fetch welcome message from backend AI
-   * This ensures the welcome is AI-generated, not hardcoded
-   * No fallback - if backend is unavailable, show error
+   * Fetch welcome message from backend AI with automatic retry
+   * Implements exponential backoff for resilience when backend starts up
    */
   private async fetchAIWelcomeMessage(): Promise<void> {
-    this.updateAgentStatus('validating', 10, 'Initializing...');
+    this.updateAgentStatus('validating', 10, 'Connecting to AI service...');
     
     try {
       const response = await this.backendChat.getWelcomeMessage();
+      this.welcomeFetched = true;
+      this.welcomeRetryCount = 0;
       this.appendMessage(this.createMessage('assistant', response.message));
       this.updateAgentStatus('idle', 0, '');
     } catch (error: any) {
-      // No fallback - backend is required for all AI responses
       console.error('Backend service unavailable:', error.message);
+      
+      // Auto-retry with exponential backoff (2s, 4s, 8s)
+      if (this.welcomeRetryCount < this.MAX_WELCOME_RETRIES) {
+        this.welcomeRetryCount++;
+        const delay = Math.pow(2, this.welcomeRetryCount) * 1000;
+        this.updateAgentStatus('validating', 20 * this.welcomeRetryCount, 
+          `Connecting... (attempt ${this.welcomeRetryCount + 1}/${this.MAX_WELCOME_RETRIES + 1})`);
+        
+        this.welcomeRetryTimeoutId = setTimeout(() => {
+          this.fetchAIWelcomeMessage();
+        }, delay);
+        return;
+      }
+      
+      // All retries exhausted - show connection message with retry option
       this.appendMessage(this.createMessage('assistant',
-        `⚠️ **Service Unavailable**\n\n` +
-        `Unable to connect to the backend service. Please ensure the server is running and try again.\n\n` +
-        `Contact your administrator if the problem persists.`
+        `## Waiting for Backend Service\n\n` +
+        `The AI service is not yet available. This typically means:\n` +
+        `- The server is still starting up\n` +
+        `- Network connectivity issue\n\n` +
+        `**What to do:** Type **"retry"** or just start typing once the server is ready - I'll automatically reconnect.\n\n` +
+        `*The service will auto-detect when the backend becomes available.*`
       ));
-      this.updateAgentStatus('error', 0, 'Service unavailable');
+      this.updateAgentStatus('idle', 0, '');
+      
+      // Start background health polling
+      this.startBackendHealthPolling();
+    }
+  }
+
+  /**
+   * Retry connection to backend - can be called by user typing "retry"
+   */
+  async retryBackendConnection(): Promise<void> {
+    if (this.welcomeFetched) return;
+    
+    this.welcomeRetryCount = 0;
+    // Remove the last "waiting for service" message
+    const currentMessages = this.messages();
+    if (currentMessages.length > 0) {
+      const lastMsg = currentMessages[currentMessages.length - 1];
+      if (lastMsg.role === 'assistant' && lastMsg.content.includes('Waiting for Backend Service')) {
+        this.setMessages(currentMessages.slice(0, -1));
+      }
+    }
+    
+    await this.fetchAIWelcomeMessage();
+  }
+
+  /**
+   * Background health polling - checks backend and auto-fetches welcome when available
+   */
+  private healthPollIntervalId: ReturnType<typeof setInterval> | null = null;
+  
+  private startBackendHealthPolling(): void {
+    // Don't start multiple polling loops
+    if (this.healthPollIntervalId) return;
+    
+    this.healthPollIntervalId = setInterval(async () => {
+      if (this.welcomeFetched) {
+        this.stopBackendHealthPolling();
+        return;
+      }
+      
+      try {
+        const isHealthy = await this.backendChat.checkHealth();
+        if (isHealthy && !this.welcomeFetched) {
+          this.stopBackendHealthPolling();
+          await this.retryBackendConnection();
+        }
+      } catch {
+        // Still unavailable, continue polling
+      }
+    }, 5000); // Check every 5 seconds
+  }
+
+  private stopBackendHealthPolling(): void {
+    if (this.healthPollIntervalId) {
+      clearInterval(this.healthPollIntervalId);
+      this.healthPollIntervalId = null;
+    }
+    if (this.welcomeRetryTimeoutId) {
+      clearTimeout(this.welcomeRetryTimeoutId);
+      this.welcomeRetryTimeoutId = null;
     }
   }
 
@@ -1323,9 +1443,9 @@ export class PoolLogicChatService {
     // ── MBS Pool prefix ──────────────────────────────────────────────
     const prefixMatch = lower.match(/(?:prefix|mbs\s*(?:pool)?\s*prefix)\s*(?:=|:)?\s*([a-z]{2})/i);
     if (prefixMatch) filter.mbsPoolPrefix = prefixMatch[1].toUpperCase();
-    // Also match "FG" or "FH" after "prefix"
+    // Also match "MX" or "MA" after "prefix"
     if (!filter.mbsPoolPrefix) {
-      const shortPrefix = lower.match(/prefix\s+(fg|fh|fn)/);
+      const shortPrefix = lower.match(/prefix\s+(mx|ma|mf)/);
       if (shortPrefix) filter.mbsPoolPrefix = shortPrefix[1].toUpperCase();
     }
 

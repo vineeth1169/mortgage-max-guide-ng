@@ -96,7 +96,7 @@ Search and filter loans using natural language queries:
 | **Loan Age** | "filter age below 24 months" or "loans older than 60 months" |
 | **Property Type** | "filter property type SF" or "show all condo loans" |
 | **Loan Status** | "filter status A" or "show active loans" |
-| **MBS Prefix** | "filter prefix FG" |
+| **MBS Prefix** | "filter prefix MX" |
 | **Special Category** | "filter special category HFA" |
 
 **Combine multiple criteria:**
@@ -191,9 +191,10 @@ Sessions persist even if you refresh the page.
 ## Data Security & Privacy
 
 - ✅ **No data modification** — The system only analyzes; it never changes your loan data
-- ✅ **Browser-based processing** — Data stays in your browser session
-- ✅ **Session storage only** — Data is cleared when you close the browser tab
-- ✅ **No external data transmission** — All validation runs locally in the browser
+- ✅ **Backend-only processing** — All validation and AI logic executes on the server
+- ✅ **In-memory only** — Loan data is processed in-memory and never persisted to disk
+- ✅ **No PII extraction** — System doesn’t parse or store personal identifiers
+- ✅ **Audit logging** — All operations are logged for compliance
 
 ---
 
@@ -204,14 +205,19 @@ Sessions persist even if you refresh the page.
 | **Frontend Framework** | Angular 19.1 (Standalone Components, Signals) |
 | **UI Styling** | Tailwind CSS 3.4 with MortgageMax brand colors |
 | **State Management** | Angular Signals (reactive, fine-grained updates) |
-| **File Parsing** | Built-in CSV/JSON parsers with field validation |
-| **Session Storage** | Browser sessionStorage for persistence |
-| **API Architecture** | API-first with local fallback (extensible for backend integration) |
+| **Backend** | Express.js (Node.js 20+) — all business logic |
+| **AI Provider** | Groq LLaMA 3.3 70B (primary) / Claude (secondary) |
+| **File Parsing** | CSV/XLSX/TSV parsers (papaparse + xlsx) |
+| **Session Storage** | Browser sessionStorage for chat persistence |
+| **Containerization** | Docker with health checks |
 
-**Extensibility Points:**
-- `EligibilityApiService` — POST `/api/eligibility/evaluate` for backend validation
-- `PoolingApiService` — POST `/api/pooling/build` for backend pool construction
-- Currently uses local validation engine; ready for API integration when available
+**API Endpoints (Fully Implemented):**
+- `POST /api/chat/message` — AI-powered chat with intent classification
+- `POST /api/eligibility/evaluate` — Server-side loan validation
+- `POST /api/pooling/build` — Pool construction with eligible loans
+- `POST /api/loans/filter` — AI-powered loan filtering
+- `GET/POST/PUT/DELETE /api/rules` — Full CRUD for eligibility rules
+- `GET /api/agent/logs` — Audit trail
 
 ---
 

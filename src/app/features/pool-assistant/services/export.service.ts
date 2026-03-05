@@ -136,7 +136,7 @@ export class ExportService {
         return `No pool number assigned. Assign this loan to a valid pool (e.g., PL-001) before delivery.`;
       
       case 'PREFIX-001':
-        return `MBS prefix "${actual || 'none'}" is invalid. Assign valid prefix: FG (Gold PC), FH (ARM PC), or FN (Fixed Rate).`;
+        return `MBS prefix "${actual || 'none'}" is invalid. Assign valid prefix: MX (Fixed Rate Pool), MA (Adjustable Rate Pool), or MF (Fixed Rate Note).`;
       
       default:
         return `Review ${violation.rule.ruleName} requirements and correct ${actual} to meet ${expected} criteria.`;

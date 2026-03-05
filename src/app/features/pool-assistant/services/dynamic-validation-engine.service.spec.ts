@@ -29,14 +29,16 @@ describe('DynamicValidationEngine', () => {
 
   const createLoan = (overrides: Partial<LoanRecord> = {}): LoanRecord => ({
     loanNumber: 'TEST-001',
-    poolNumber: 'FG001234',
-    mbsPoolPrefix: 'FG',
+    poolNumber: 'MX001234',
+    mbsPoolPrefix: 'MX',
     interestRate: 5.5,
     couponRate: 5.0,
     netYield: 4.5,
     loanAgeMonths: 12,
     loanStatusCode: 'A',
+    rateTypeCode: 'FRM',
     propertyType: 'SF',
+    specialCategory: '',
     upb: 300000,
     currentInvestorBalance: 295000,
     ...overrides
@@ -142,7 +144,7 @@ describe('DynamicValidationEngine', () => {
     });
   });
 
-  describe('validateLoans', () => {
+  describe('validateMultipleLoans', () => {
     beforeEach(async () => {
       const loadPromise = service.loadRules();
       httpMock.expectOne(r => r.url.includes('/rules')).flush({ 
@@ -152,15 +154,15 @@ describe('DynamicValidationEngine', () => {
       await loadPromise;
     });
 
-    it('should validate multiple loans', () => {
+    it('should validate multiple loans individually', () => {
       const loans = [
         createLoan({ loanNumber: 'L001' }),
         createLoan({ loanNumber: 'L002', interestRate: 15 })
       ];
-      const results = service.validateLoans(loans);
+      const results = loans.map(l => service.validateLoan(l));
       expect(results.length).toBe(2);
-      expect(results[0].eligible).toBe(true);
-      expect(results[1].eligible).toBe(false);
+      expect(results[0].length).toBe(0); // valid
+      expect(results[1].length).toBeGreaterThan(0); // invalid
     });
   });
 

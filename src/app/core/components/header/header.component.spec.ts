@@ -92,12 +92,16 @@ describe('HeaderComponent', () => {
   // ── Navigation Links ────────────────────────────────────────
 
   describe('navigation links', () => {
-    it('should have 6 nav links defined', () => {
-      expect(component.navLinks.length).toBe(6);
+    it('should have 7 nav links defined', () => {
+      expect(component.navLinks.length).toBe(7);
     });
 
     it('should have Home as first nav link', () => {
       expect(component.navLinks[0].label).toBe('Home');
+    });
+
+    it('should have Bring Your Own Loans as second nav link', () => {
+      expect(component.navLinks[1].label).toBe('Bring Your Own Loans');
     });
 
     it('should have Bulletins link', () => {
@@ -105,8 +109,9 @@ describe('HeaderComponent', () => {
       expect(bulletins).toBeTruthy();
     });
 
-    it('should mark Home as active', () => {
-      expect(component.navLinks[0].active).toBeTrue();
+    it('should identify pool-assistant route correctly', () => {
+      component.currentUrl.set('/pool-assistant');
+      expect(component.isActive('/pool-assistant')).toBeTrue();
     });
   });
 

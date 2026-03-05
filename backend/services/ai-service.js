@@ -35,19 +35,19 @@ function buildSystemPrompt() {
 
 You have DIRECT ACCESS to the user's loan data. When the user asks questions about their loans, you MUST analyze the provided loan data and give specific, accurate answers with exact numbers and loan references.
 
-## Your Capabilities
+// Your Capabilities
 1. **Validate loans** against MortgageMax Single-Family Seller/Servicer Guide eligibility rules
 2. **Build compliant pools** from eligible loans
 3. **Filter loans** by criteria (rate, UPB, property type, age, status, etc.)
 4. **Explain rules** and eligibility requirements
 5. **Answer questions** about MortgageMax guidelines
 
-## Current Active Eligibility Rules
+// Current Active Eligibility Rules
 | Rule ID | Name | Requirement | Severity |
 |---------|------|-------------|----------|
 ${rulesTable}
 
-## Response Format
+// Response Format
 You MUST respond with valid JSON in this exact format:
 {
   "intent": {
@@ -55,25 +55,39 @@ You MUST respond with valid JSON in this exact format:
     "parameters": { /* optional parameters like ruleId, filterCriteria */ },
     "confidence": <0.0 to 1.0>
   },
-  "message": "<Your conversational response to the user in markdown format>",
+  "message": "<Your conversational response to the user in markdown format - this is what the user sees>",
   "reasoning": "<Brief explanation of why you chose this intent>"
 }
 
-## Intent Mapping
-- User wants to check/validate/verify loans → action: "validate"
-- User wants to build/construct/create a pool → action: "build-pool"  
-- User wants to filter/find/search loans → action: "filter" (include filter object in parameters.filter)
-- User asks about rules/eligibility requirements → action: "show-rules"
-- User asks to explain a specific rule → action: "explain-rule" (include ruleId in parameters)
-- User asks for summary/metrics → action: "summary"
-- User asks about failed/ineligible loans → action: "show-ineligible"
-- User wants to download/export ineligible loans → action: "download-ineligible"
-- User asks for help/commands → action: "help"
-- User wants sample/demo data → action: "load-sample"
-- User asks a specific data question → action: "data-query" (provide COMPLETE answer in message)
-- General questions about loans/guidelines → action: "general"
+// CRITICAL: The "message" field rules
+// The "message" field is what the USER SEES directly in the chat interface
+// It must be ONLY natural, conversational text in markdown format
+// NEVER include JSON, code blocks with JSON, technical metadata, intent info, or confidence scores in the message
+// NEVER start the message with json or any code formatting
+// Write as if you're speaking directly to the user in a friendly, professional manner
+// Example GOOD message: "You have 108 loans loaded. The average interest rate is 4.5%."
+// Example BAD message: "json{ \"intent\": ..." or "Validating 108 loans against..." with JSON
 
-## Filter Parameter Schema
+// Intent Mapping (PRIORITY ORDER - check from top to bottom)
+1. User asks about loan count, how many loans, number of loans loaded → action: "data-query" (answer DIRECTLY in message)
+2. User asks a specific question about the data (rates, amounts, properties, ages, any statistics) → action: "data-query" (provide COMPLETE answer in message with specific values)
+3. User greets you (hi, hello, hey) → action: "general" (respond conversationally)
+4. User explicitly says "validate", "check eligibility", "run validation" → action: "validate"
+5. User explicitly says "build pool", "create pool", "construct pool" → action: "build-pool"  
+6. User wants to filter/find/search specific loans by criteria → action: "filter" (include filter object in parameters.filter)
+7. User asks about rules/eligibility requirements (what rules, show rules) → action: "show-rules"
+8. User asks to explain a specific rule by ID or name → action: "explain-rule" (include ruleId in parameters)
+9. User asks for summary/metrics/overview → action: "summary"
+10. User asks about failed/ineligible loans → action: "show-ineligible"
+11. User wants to download/export ineligible loans → action: "download-ineligible"
+12. User asks for help/commands → action: "help"
+13. User wants sample/demo data → action: "load-sample"
+14. General questions about MortgageMax guidelines → action: "general"
+
+// IMPORTANT: USE "data-query" FOR QUESTIONS ABOUT LOADED DATA
+If the user asks ANY question about the uploaded loans (count, rates, amounts, types, etc.), use action: "data-query" and provide a COMPLETE, user-friendly answer in the message field. Do NOT use "validate" for questions - only use "validate" when user explicitly requests validation.
+
+// Filter Parameter Schema
 When action is "filter", include parameters.filter with applicable fields:
 {
   "minCouponRate": number,
@@ -86,24 +100,50 @@ When action is "filter", include parameters.filter with applicable fields:
   "maxLoanAge": number,
   "loanStatusCode": "A" | "C" | "D",
   "propertyTypes": ["SF", "CO", "CP", "PU", "MH", "2-4"],
-  "mbsPoolPrefix": "FG" | "FH" | "FN",
+  "mbsPoolPrefix": "MX" | "MA" | "MF",
   "poolNumber": string,
   "specialCategories": string[]
 }
 
-## Response Formatting
-- ALWAYS use markdown tables when displaying loan data, comparisons, or lists
-- Tables should have clear headers and proper alignment
-- For data queries with multiple loans, present results in a table
-- Include relevant columns based on the query context
+// Response Formatting - CRITICAL
+Your message will be rendered as HTML. Follow these rules EXACTLY:
 
-## Guidelines
+// Tables (MUST use proper markdown format)
+- Use pipe-delimited markdown tables: | Column1 | Column2 |
+- ALWAYS include a separator row after headers: |---|---|
+- Example of CORRECT table format:
+| Loan # | Rate | Status |
+|--------|------|--------|
+| LN001 | 4.5% | Eligible |
+| LN002 | 5.0% | Ineligible |
+
+// Headers
+- Use ## for section headers (with space after ##)
+- Use ### for subsection headers (with space after ###)
+- Add a newline BEFORE headers
+
+// Lists
+- Use - or * followed by a space for bullet points
+- Each list item on its own line
+
+// Text formatting
+- Use **text** for bold
+- Use *text* for italic
+- Keep paragraphs separated by blank lines
+
+// What NOT to do
+- Do NOT use tabs to create tables (use | pipes)
+- Do NOT put multiple items on one line without proper separation
+- Do NOT omit the table separator row (|---|)
+- Do NOT run headers together with text (add newlines)
+
+// Guidelines
 - Be concise but thorough
 - Reference specific rule IDs when discussing eligibility
 - If unsure, ask clarifying questions
 - When loan data is provided, ALWAYS analyze it to answer questions accurately
 - For data queries, include specific loan numbers and values in your response
-- ALWAYS format multi-row data as tables for readability`;
+- ALWAYS format multi-row data as proper markdown tables`;
 }
 
 // Build welcome message prompt
@@ -152,32 +192,94 @@ async function callGroqAPI(messages, apiKey, model = 'llama-3.3-70b-versatile') 
  */
 function parseAIResponse(text) {
   try {
-    // Strip markdown code block markers
+    // Strip markdown code block markers and leading whitespace/newlines
     let cleanedText = text
       .replace(/^\s*```(?:json)?\s*/i, '')
-      .replace(/\s*```\s*$/i, '');
+      .replace(/\s*```\s*$/i, '')
+      .trim();
+    
+    // If text starts with 'json' word (common AI mistake), strip it
+    if (cleanedText.toLowerCase().startsWith('json')) {
+      cleanedText = cleanedText.substring(4).trim();
+    }
     
     const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+      
+      // Get the message field
+      let cleanMessage = parsed.message || '';
+      
+      // Apply aggressive cleaning to remove any JSON that leaked into message
+      cleanMessage = sanitizeMessageForDisplay(cleanMessage);
+      
       return {
         intent: {
           action: parsed.intent?.action || 'general',
           parameters: parsed.intent?.parameters,
           confidence: parsed.intent?.confidence || 0.8,
         },
-        message: parsed.message || text,
+        message: cleanMessage || 'I processed your request.',
         reasoning: parsed.reasoning,
       };
     }
-  } catch {
-    // JSON parsing failed
+  } catch (err) {
+    console.error('JSON parsing error:', err.message);
   }
 
+  // Fallback: return the raw text but sanitized
   return {
     intent: { action: 'general', confidence: 0.5 },
-    message: text,
+    message: sanitizeMessageForDisplay(text),
   };
+}
+
+/**
+ * Remove any JSON/technical artifacts from message text
+ * This ensures users only see clean, natural language
+ */
+function sanitizeMessageForDisplay(text) {
+  if (!text || typeof text !== 'string') {
+    return 'I processed your request.';
+  }
+
+  let clean = text;
+  
+  // Remove leading json word (case insensitive)
+  clean = clean.replace(/^json\s*/i, '');
+  
+  // Remove code block markers
+  clean = clean.replace(/```json\s*/gi, '');
+  clean = clean.replace(/```\s*/g, '');
+  
+  // If the text contains a full JSON object with intent/action, extract just the message part
+  const jsonPattern = /\{\s*"intent"\s*:\s*\{[^}]*"action"[^}]*\}[^}]*"message"\s*:\s*"([^"]+)"/;
+  const jsonMatch = clean.match(jsonPattern);
+  if (jsonMatch && jsonMatch[1]) {
+    clean = jsonMatch[1];
+  }
+  
+  // More aggressive: remove any { "intent": ... } blocks
+  clean = clean.replace(/\{\s*"intent"\s*:[\s\S]*?"message"\s*:\s*"/gi, '');
+  clean = clean.replace(/",\s*"reasoning"[\s\S]*?\}/g, '');
+  
+  // Remove standalone JSON fragments
+  clean = clean.replace(/"intent"\s*:\s*\{[^}]+\}/g, '');
+  clean = clean.replace(/"action"\s*:\s*"[^"]+"/g, '');
+  clean = clean.replace(/"confidence"\s*:\s*[\d.]+/g, '');
+  clean = clean.replace(/"parameters"\s*:\s*\{[^}]*\}/g, '');
+  clean = clean.replace(/"reasoning"\s*:\s*"[^"]*"/g, '');
+  
+  // Clean up any leftover JSON syntax
+  clean = clean.replace(/^\s*\{\s*,?\s*/g, '');
+  clean = clean.replace(/\s*,?\s*\}\s*$/g, '');
+  clean = clean.replace(/^\s*"\s*/g, '');
+  clean = clean.replace(/\s*"\s*$/g, '');
+  
+  // Remove multiple newlines and trim
+  clean = clean.replace(/\n{3,}/g, '\n\n').trim();
+  
+  return clean || 'I processed your request.';
 }
 
 /**
