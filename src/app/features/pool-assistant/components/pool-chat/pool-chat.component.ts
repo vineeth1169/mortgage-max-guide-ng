@@ -475,15 +475,7 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
                 }
               </div>
 
-              <!-- API Key button (when not configured) -->
-              @if (!chatService.aiConfigured()) {
-                <button
-                  (click)="showApiKeyInput.set(!showApiKeyInput())"
-                  class="text-[10px] text-orange-600 hover:text-orange-800 font-medium"
-                >
-                  Set API Key
-                </button>
-              }
+              <!-- API keys are managed on the backend - no frontend key input needed -->
             </div>
           </div>
 
@@ -494,30 +486,6 @@ import { PoolLogicChatService } from '../../services/pool-logic-chat.service';
             Clear conversation
           </button>
         </div>
-
-        <!-- API Key Input (shown when needed) -->
-        @if (showApiKeyInput()) {
-          <div class="mt-2 flex items-center gap-2 p-2 bg-blue-50 rounded-lg border border-blue-200">
-            <input
-              type="password"
-              [(ngModel)]="apiKeyInput"
-              [placeholder]="chatService.aiProvider() === 'groq' ? 'Enter Groq API key (console.groq.com)...' : 'Enter Claude API key...'"
-              class="flex-1 text-xs px-2 py-1.5 rounded border border-blue-300 focus:outline-none focus:border-blue-500"
-            />
-            <button
-              (click)="saveApiKey()"
-              class="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors"
-            >
-              Save
-            </button>
-            <button
-              (click)="showApiKeyInput.set(false)"
-              class="px-2 py-1.5 text-xs text-gray-500 hover:text-gray-700"
-            >
-              Cancel
-            </button>
-          </div>
-        }
       </div>
     </div>
   `,
@@ -617,8 +585,6 @@ export class PoolChatComponent implements AfterViewChecked {
   readonly showSuggestions = signal(false);
   readonly selectedSuggestionIndex = signal(-1);
   readonly editingSessionId = signal<string | null>(null);
-  readonly showApiKeyInput = signal(false);
-  readonly apiKeyInput = signal('');
   readonly showProviderMenu = signal(false);
   readonly showDownloadMenu = signal(false);
 
@@ -764,20 +730,6 @@ export class PoolChatComponent implements AfterViewChecked {
         return 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100';
       default:
         return 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100';
-    }
-  }
-
-  saveApiKey(): void {
-    const key = this.apiKeyInput().trim();
-    if (key) {
-      const provider = this.chatService.aiProvider();
-      if (provider === 'groq') {
-        this.chatService.setGroqApiKey(key);
-      } else {
-        this.chatService.setClaudeApiKey(key);
-      }
-      this.showApiKeyInput.set(false);
-      this.apiKeyInput.set('');
     }
   }
 

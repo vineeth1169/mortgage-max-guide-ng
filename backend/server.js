@@ -13,6 +13,9 @@
  * - Audit logging
  */
 
+// Load environment variables from .env BEFORE anything else
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -26,6 +29,15 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const DATA_FILE = path.join(__dirname, 'data', 'rules.json');
 const AUDIT_LOG_FILE = path.join(__dirname, 'data', 'audit-logs.json');
+
+// ── API Keys (server-side ONLY - NEVER accept from frontend) ──────
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+
+function resolveApiKey() {
+  // API key is ONLY loaded from server environment - never from client
+  return GROQ_API_KEY;
+}
 
 // ── Middleware ────────────────────────────────────────────────────
 
@@ -419,12 +431,12 @@ const chatSessions = new Map();
 
 // POST /api/chat/welcome - Get AI-generated welcome message
 app.post('/api/chat/welcome', async (req, res) => {
-  const apiKey = req.headers['x-groq-api-key'] || process.env.GROQ_API_KEY;
+  const apiKey = resolveApiKey();
   
   if (!apiKey) {
     return res.status(400).json({
       success: false,
-      error: 'Groq API key required. Set x-groq-api-key header or GROQ_API_KEY env var.'
+      error: 'Groq API key not configured. Set GROQ_API_KEY in backend .env file.'
     });
   }
 
@@ -449,13 +461,13 @@ app.post('/api/chat/welcome', async (req, res) => {
 
 // POST /api/chat/message - Process a chat message through AI
 app.post('/api/chat/message', async (req, res) => {
-  const apiKey = req.headers['x-groq-api-key'] || process.env.GROQ_API_KEY;
+  const apiKey = resolveApiKey();
   const { message, sessionId, context } = req.body;
   
   if (!apiKey) {
     return res.status(400).json({
       success: false,
-      error: 'Groq API key required'
+      error: 'Groq API key not configured on server. Set GROQ_API_KEY in backend .env file.'
     });
   }
 
@@ -518,7 +530,7 @@ app.delete('/api/chat/session/:sessionId', (req, res) => {
 
 // POST /api/eligibility/evaluate - Validate loans against rules
 app.post('/api/eligibility/evaluate', async (req, res) => {
-  const apiKey = req.headers['x-groq-api-key'] || process.env.GROQ_API_KEY;
+  const apiKey = resolveApiKey();
   const { loans } = req.body;
 
   if (!Array.isArray(loans) || loans.length === 0) {
@@ -611,7 +623,7 @@ app.post('/api/eligibility/evaluate', async (req, res) => {
 
 // POST /api/pooling/build - Build a pool from eligible loans
 app.post('/api/pooling/build', async (req, res) => {
-  const apiKey = req.headers['x-groq-api-key'] || process.env.GROQ_API_KEY;
+  const apiKey = resolveApiKey();
   const { loans, requestId, targetCoupon } = req.body;
 
   if (!Array.isArray(loans) || loans.length === 0) {
@@ -880,6 +892,8 @@ app.listen(PORT, () => {
   console.log('║     All Business Logic Runs Here (Frontend is Display Only)      ║');
   console.log('╠══════════════════════════════════════════════════════════════════╣');
   console.log(`║  🚀 Server running on http://localhost:${PORT}                        ║`);
+  console.log(`║  🔐 API Keys: Backend-only (loaded from .env)                    ║`);
+  console.log(`║  🔑 GROQ_API_KEY: ${GROQ_API_KEY ? '✓ configured' : '✗ MISSING - set in backend/.env'}              ║`);
   console.log('║                                                                  ║');
   console.log('║  AI Chat API (all messages via AI):                              ║');
   console.log('║    POST   /api/chat/welcome     - AI-generated welcome           ║');

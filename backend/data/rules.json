@@ -18,7 +18,7 @@
       "remediation": "Verify the interest rate is correctly entered. If the rate is outside normal bounds, check if this loan qualifies for a special program.",
       "enabled": true,
       "createdAt": "2025-01-01T00:00:00Z",
-      "updatedAt": "2026-02-27T21:54:13.091Z",
+      "updatedAt": "2026-03-06T21:34:35.747Z",
       "provenance": {
         "author": "system",
         "version": "1.0.1",
@@ -215,7 +215,7 @@
   ],
   "metadata": {
     "version": "1.0.0",
-    "lastUpdated": "2026-02-27T21:54:13.093Z",
+    "lastUpdated": "2026-03-06T21:34:35.747Z",
     "totalRules": 11
   }
 }

@@ -186,10 +186,23 @@
           }
         }
       }
+    },
+    {
+      "id": "c34c1bcc-b4ef-4f3d-b90b-836ab5f58321",
+      "timestamp": "2026-03-06T21:37:30.963Z",
+      "action": "eligibility.evaluate",
+      "userId": "anonymous",
+      "payload": {
+        "loanCount": 100
+      },
+      "result": {
+        "eligibleCount": 65,
+        "ineligibleCount": 35
+      }
     }
   ],
   "metadata": {
-    "totalEntries": 10,
-    "lastUpdated": "2026-02-27T21:54:13.092Z"
+    "totalEntries": 11,
+    "lastUpdated": "2026-03-06T21:37:30.963Z"
   }
 }

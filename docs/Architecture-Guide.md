@@ -75,6 +75,7 @@ backend/                      # Express.js API server (ALL business logic)
 │   └── audit-logs.json       # Audit trail
 ├── services/
 │   └── ai-service.js         # AI + rule evaluation engine
+├── .env.example              # Environment template (copy to .env)
 ├── package.json              # Node dependencies
 ├── server.js                 # REST API implementation
 ├── Dockerfile                # Container image definition
@@ -89,17 +90,23 @@ backend/                      # Express.js API server (ALL business logic)
 
 ```
 ┌─────────────────┐     ┌─────────────────────┐     ┌─────────────────┐
-│   Pool Chat     │────▶│  PoolLogicChat      │────▶│   ClaudeAI      │
+│   Pool Chat     │────▶│  PoolLogicChat      │────▶│   BackendChat   │
 │   Component     │     │  Service            │     │   Service       │
-│   (UI Layer)    │     │  (Orchestrator)     │     │   (NLU)         │
+│   (UI Layer)    │     │  (Orchestrator)     │     │   (HTTP Client) │
 └─────────────────┘     └─────────────────────┘     └─────────────────┘
-                                │                           │
-                                ▼                           │
-                        ┌───────────────────┐               │
-                        │  LoanValidation   │◀──────────────┘
-                        │  Service          │   (Intent routing)
-                        │  (Rule Engine)    │
-                        └───────────────────┘
+                                                            │
+                                                            ▼ HTTP (no API keys)
+                                                ┌───────────────────┐
+                                                │  Express Backend  │
+                                                │  (API keys in     │
+                                                │   .env only)      │
+                                                └───────────────────┘
+                                                            │
+                                                            ▼ HTTPS
+                                                ┌───────────────────┐
+                                                │  Groq / Claude    │
+                                                │  AI API           │
+                                                └───────────────────┘
 ```
 
 ### Components Explained
@@ -122,35 +129,13 @@ backend/                      # Express.js API server (ALL business logic)
   - Execute intents (validate, build-pool, filter, etc.)
 
 #### 3. ClaudeAIService (`claude-ai.service.ts`)
-- **Purpose**: Natural Language Understanding (NLU) for intent classification
-- **Two Operating Modes**:
-
-  **Demo Mode (Default)** - No API calls, no cost:
-  ```typescript
-  // Uses regex pattern matching + hardcoded response templates
-  if (/validate|check.*eligib|verify.*loan/.test(input)) {
-    return { action: 'validate', confidence: 0.90 };
-  }
-  ```
-  - Pattern-based intent classification
-  - Context-aware response generation
-  - 150-350ms simulated delay for realistic UX
-
-  **Live Mode** - Requires Claude API key:
-  ```typescript
-  // Calls Anthropic API with structured system prompt
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    headers: { 'x-api-key': apiKey },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      system: LOAN_ADVISOR_SYSTEM_PROMPT,
-      messages: conversationHistory
-    })
-  });
-  ```
-  - True AI intent classification with reasoning
-  - Conversational context maintained
-  - JSON-formatted responses with confidence scores
+- **Purpose**: UI state manager for AI provider selection
+- **Responsibilities**:
+  - Track selected AI provider (Groq / Claude)
+  - Expose provider info for UI display
+  - Report configuration status
+  - **No direct API calls** — all AI interactions are routed through the backend via `BackendChatService`
+  - **No API key storage** — keys are managed exclusively on the backend (`.env`)
 
 #### 4. LoanValidationService (`loan-validation.service.ts`)
 - **Purpose**: Rule-based eligibility validation engine
@@ -222,10 +207,10 @@ The application enforces 11 MortgageMax eligibility rules:
    ├─▶ Creates user message, adds to chat
    └─▶ processUserInput()
    
-3. ClaudeAIService.classifyIntent()
-   ├─▶ [Demo Mode] Pattern match → "validate"
-   │   Returns: { action: 'validate', confidence: 0.90 }
-   └─▶ [Live Mode] API call → JSON response
+3. BackendChatService.sendMessage()
+   └─▶ POST /api/chat → Express backend
+       ├─▶ AI classifies intent via Groq API (server-side)
+       └─▶ Returns: { action: 'validate', confidence: 0.90 }
    
 4. PoolLogicChatService.handleValidation()
    ├─▶ First tries: EligibilityApiService.evaluate()
@@ -291,21 +276,30 @@ Returns: { filteredLoans, appliedFilters }
 
 ## Configuration
 
-### Environment Variables
+### API Key Management (Backend Only)
+
+API keys are stored **exclusively on the backend** in a `.env` file. The frontend never stores, transmits, or has access to any API keys.
+
+```bash
+# backend/.env (git-ignored, never committed)
+GROQ_API_KEY=your-groq-api-key    # Required - https://console.groq.com
+ANTHROPIC_API_KEY=                 # Optional, paid
+PORT=3001
+```
+
+### Frontend Environment
 
 ```typescript
-// environment.ts (development)
+// environment.ts (development) — NO API KEYS HERE
 export const environment = {
   production: false,
   ai: {
     defaultProvider: 'groq',
     groq: {
-      apiKey: '',             // Get one at https://console.groq.com
       model: 'llama-3.3-70b-versatile',
       maxTokens: 1024,
     },
     claude: {
-      apiKey: '',             // Paid API key
       proxyUrl: '/api/claude',
       model: 'claude-sonnet-4-20250514',
       maxTokens: 1024,
@@ -313,6 +307,7 @@ export const environment = {
   },
   rulesApiUrl: 'http://localhost:3001/api',
 };
+```
 ```
 
 ### Running the Application

@@ -25,15 +25,19 @@ describe('ClaudeAIService', () => {
       expect(service.provider()).toBe('claude');
     });
 
-    it('should set and store Groq API key', () => {
-      service.setGroqApiKey('test-groq-key');
+    it('should always be configured (backend manages keys)', () => {
       expect(service.isConfigured()).toBe(true);
     });
 
-    it('should set and store Claude API key', () => {
+    it('should switch to groq on setGroqApiKey', () => {
       service.setProvider('claude');
-      service.setClaudeApiKey('test-claude-key');
-      expect(service.isConfigured()).toBe(true);
+      service.setGroqApiKey('ignored');
+      expect(service.provider()).toBe('groq');
+    });
+
+    it('should switch to claude on setClaudeApiKey', () => {
+      service.setClaudeApiKey('ignored');
+      expect(service.provider()).toBe('claude');
     });
 
     it('should clear conversation history', () => {

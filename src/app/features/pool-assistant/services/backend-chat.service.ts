@@ -151,21 +151,11 @@ export class BackendChatService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = environment.rulesApiUrl || 'http://localhost:3001/api';
   
-  // Get API key from environment or localStorage
-  private getApiKey(): string {
-    try {
-      return localStorage.getItem('mortgagemax_groq_api_key') || 
-             environment.ai?.groq?.apiKey || 
-             '';
-    } catch {
-      return environment.ai?.groq?.apiKey || '';
-    }
-  }
+  // No API key handling - keys are managed exclusively on the backend
 
   private getHeaders(): HttpHeaders {
     return new HttpHeaders({
       'Content-Type': 'application/json',
-      'x-groq-api-key': this.getApiKey(),
     });
   }
 

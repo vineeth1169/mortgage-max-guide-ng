@@ -67,23 +67,26 @@ Characteristics:
 │                                                                          │
 │  ┌────────────────────────────────────────────────────────────────┐     │
 │  │                    Angular 19 Application                       │     │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │     │
-│  │  │  Pool Chat   │─▶│  Chat Service│─▶│  AI Service (Groq)   │  │     │
-│  │  │  Component   │  │  (Orchestrat)│  │  Intent + Responses  │  │     │
-│  │  └──────────────┘  └──────────────┘  └──────────────────────┘  │     │
-│  │                           │                                     │     │
-│  │                    ┌──────┴──────┐                              │     │
-│  │                    │  Validation │                              │     │
-│  │                    │  Service    │                              │     │
-│  │                    └─────────────┘                              │     │
+│  │  ┌──────────────┐  ┌──────────────┐                          │     │
+│  │  │  Pool Chat   │─▶│  Backend     │  (No API keys in front) │     │
+│  │  │  Component   │  │  Chat Service│                          │     │
+│  │  └──────────────┘  └──────┬───────┘                          │     │
+│  │                           │  HTTP                             │     │
+│  │                    ┌──────┴──────┐                            │     │
+│  │                    │  Validation │                            │     │
+│  │                    │  Service    │                            │     │
+│  │                    └─────────────┘                            │     │
 │  └────────────────────────────────────────────────────────────────┘     │
 │                                │                                         │
 │                                ▼                                         │
 │              ┌─────────────────────────────────┐                        │
 │              │      Express.js API Server      │                        │
 │              │   ┌─────────┐  ┌─────────────┐  │                        │
-│              │   │ Rules   │  │ Audit Logs  │  │                        │
-│              │   │ (.json) │  │ (.json)     │  │                        │
+│              │   │ Rules   │  │ AI Service  │  │                        │
+│              │   │ (.json) │  │ (Groq API)  │  │                        │
+│              │   ├─────────┤  ├─────────────┤  │                        │
+│              │   │ Audit   │  │ .env (keys) │  │                        │
+│              │   │ (.json) │  │ (git-ignored)│  │                        │
 │              │   └─────────┘  └─────────────┘  │                        │
 │              └─────────────────────────────────┘                        │
 │                                                                          │
@@ -96,6 +99,7 @@ Characteristics:
 ✓ File-based storage (version-controllable)
 ✓ Minimal infrastructure cost
 ✓ Minutes to change a business rule
+✓ API keys secured in backend .env only (never in frontend)
 ```
 
 ---
@@ -214,12 +218,12 @@ public String processUserInput(String input) {
 ### This Approach: AI-Powered Understanding
 
 ```typescript
-// This approach: AI understands natural language
+// This approach: AI understands natural language (backend-only API calls)
 async processWithAI(input: string, loanContext: LoanDataContext): Promise<void> {
-    // AI analyzes intent with full context
-    const response = await this.claudeService.classifyIntent(input, loanContext);
+    // Frontend sends message to backend; AI intent classification runs server-side
+    const response = await this.backendChatService.sendMessage(input, loanContext);
     
-    // AI already generated the response
+    // Backend returns AI-classified intent + generated response
     if (['help', 'explain-rule', 'general', 'data-query'].includes(response.intent.action)) {
         // Use AI-generated response directly
         this.appendMessage(response.message);
@@ -272,7 +276,7 @@ The average rate among these is 5.92%."
 |------|------------|
 | **Loan data persistence** | Loans processed in-memory only, never persisted |
 | **PII exposure** | System doesn't extract or log loan holder names, SSNs |
-| **Data leakage to AI** | Loan data sent to AI is transient (per-request) |
+| **Data leakage to AI** | Loan data sent to AI is transient (per-request, server-side only) |
 | **Cross-session contamination** | Each session has isolated data |
 
 ### AI Safety
@@ -388,7 +392,7 @@ export class LoanDepartmentModule {}
 |-----------------|------------------|
 | **Add custom rules** | Edit `rules.json` or POST to Rules API |
 | **Change AI provider** | Set `aiProvider` in config |
-| **Add custom intents** | Extend system prompt in ClaudeAiService |
+| **Add custom intents** | Extend system prompt in backend AI service |
 | **Custom exports** | Extend ExportService |
 | **Different data sources** | Implement custom file parser |
 

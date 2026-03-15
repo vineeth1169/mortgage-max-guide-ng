@@ -82,7 +82,8 @@ See [docs/Agentic-Architecture-Guide.md](docs/Agentic-Architecture-Guide.md) for
 - Toast notifications for workflow feedback
 
 ### �🔒 Enterprise Safety Features
-- API keys managed via environment configuration (never committed)
+- API keys managed **exclusively on the backend** via `.env` (never in frontend code or browser)
+- No API keys in localStorage, HTTP headers, or compiled JS bundles
 - Audit logging for all actions
 - Rule provenance tracking (author, version, approvals)
 - No loan data modification — analysis only
@@ -140,12 +141,13 @@ See [docs/Agentic-Architecture-Guide.md](docs/Agentic-Architecture-Guide.md) for
 
 | Aspect | Implementation |
 |--------|----------------|
+| **API Keys** | Backend `.env` only — never in frontend code, bundles, or browser storage |
 | **Rule Thresholds** | Never sent to frontend |
 | **Validation Logic** | Backend only |
 | **AI System Prompts** | Backend only (contain full rule details) |
 | **Welcome Messages** | AI-generated, not hardcoded |
 | **Error Handling** | Generic errors, no logic exposure |
-| **Bundle Inspection** | No business logic visible |
+| **Bundle Inspection** | No business logic or secrets visible |
 
 ---
 
@@ -173,19 +175,19 @@ cd backend && npm install && cd ..
 
 ### Configuration
 
-Configure your API key in `src/environments/environment.ts`:
+API keys are managed **exclusively on the backend** via a `.env` file (never in the frontend):
 
-```typescript
-ai: {
-  defaultProvider: 'groq',
-  groq: {
-    apiKey: 'your-groq-api-key',  // Get one at https://console.groq.com
-    model: 'llama-3.3-70b-versatile',
-  },
-},
+```bash
+# Copy the example and add your key
+cp backend/.env.example backend/.env
+
+# Edit backend/.env
+GROQ_API_KEY=your-groq-api-key   # Get one at https://console.groq.com
+ANTHROPIC_API_KEY=               # Optional, paid
+PORT=3001
 ```
 
-> **Note:** Never commit API keys. The `environment.ts` file ships with empty keys by default.
+> **Security:** API keys never appear in frontend code, environment files, browser bundles, localStorage, or HTTP headers from the client. The backend loads keys from `.env` at startup via `dotenv`. The `.env` file is git-ignored and never committed to source control.
 > For Docker deployments, pass `GROQ_API_KEY` as an environment variable.
 
 ### Running the Application
@@ -252,6 +254,7 @@ mortgage-max-guide-ng/
 │   ├── services/
 │   │   └── ai-service.js            # AI + rule evaluation (backend-only)
 │   ├── server.js                    # API server
+│   ├── .env.example                 # Environment template (copy to .env)
 │   ├── Dockerfile
 │   └── docker-compose.yml
 │
@@ -271,12 +274,12 @@ mortgage-max-guide-ng/
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ai.groq.apiKey` | Groq API key | `''` (set via env var or config) |
-| `ai.claude.apiKey` | Claude API key | `''` |
-| `ai.defaultProvider` | `'groq'` or `'claude'` | `'groq'` |
-| `rulesApiUrl` | Backend API URL | `'http://localhost:3001/api'` |
+| Variable | Location | Description | Default |
+|----------|----------|-------------|---------|
+| `GROQ_API_KEY` | `backend/.env` | Groq API key (required) | `''` |
+| `ANTHROPIC_API_KEY` | `backend/.env` | Claude/Anthropic API key (optional) | `''` |
+| `PORT` | `backend/.env` | Backend server port | `3001` |
+| `rulesApiUrl` | `environment.ts` | Backend API URL (frontend config) | `'http://localhost:3001/api'` |
 
 ### Rule Configuration
 
@@ -356,7 +359,7 @@ Rules are stored in `backend/data/rules.json` with provenance tracking:
 - **Rule thresholds never sent to frontend**
 - **Validation logic runs only on server**
 - **AI system prompts secured on backend**
-- **API keys configured via environment**, never committed to source control
+- **API keys stored exclusively in backend `.env`** — never in frontend code, browser storage, or HTTP headers
 - **CORS-protected backend**
 - **No shell execution** from user input
 - **Input validation** on all endpoints
